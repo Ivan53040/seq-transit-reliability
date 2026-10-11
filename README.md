@@ -8,7 +8,10 @@ Built with C# / .NET 10, ASP.NET Core, EF Core, PostgreSQL, React + TypeScript, 
 (Lambda, EventBridge Scheduler, S3, Aurora Serverless, API Gateway, CloudFront), deployed with the AWS CDK
 and GitHub Actions.
 
-> **Status:** Active development (Phases 0–5 complete). Live Translink GTFS-RT ingestion, static GTFS timetable loading, percentiles & hourly analytics API, and full interactive React dashboard with Route Detail view & SVG charts are tested and operational.
+> **Status:** Active development. Running locally: live Translink GTFS-RT ingestion, static GTFS timetable
+> loading, an analytics API (percentiles, hourly and per-mode views) and a React dashboard with a route detail
+> page. Still to do: a full weekday of collected data and its quality checks, query timings on a week of data,
+> and the AWS deployment.
 
 ## How it works
 
@@ -78,8 +81,11 @@ You need the [.NET 10 SDK](https://dotnet.microsoft.com/download), Node.js 22 or
 docker compose up -d
 
 # 2. Create the tables
-$env:DB_CONNECTION_STRING = "Host=localhost;Database=seq_transit;Username=postgres;Password=postgres"
+$env:DB_CONNECTION_STRING = "Host=localhost;Port=5433;Database=seq_transit;Username=postgres;Password=postgres"
 dotnet run --project src/SeqTransit.Migrator
+
+# 2b. Load route and stop names from the SEQ GTFS zip (download it from the Queensland Open Data Portal)
+dotnet run --project src/SeqTransit.Local -- load-gtfs path\to\SEQ_GTFS.zip
 
 # 3. Collect real data: fetches every minute, loads every 5 minutes (leave it running)
 dotnet run --project src/SeqTransit.Local -- run

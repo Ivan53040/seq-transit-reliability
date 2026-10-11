@@ -43,16 +43,17 @@ public static class ReliabilityEndpoints
             TypedResults.Ok(await queries.OnTimeByRouteAsync(
                 date ?? BrisbaneTime.Today(clock), policy, clock.GetUtcNow(), cancellationToken)));
 
-        // Daily on-time trend for one route over the last N days (default 7, max 31).
+        // Daily on-time trend for one route over the N days ending on `date` (default today, 7 days, max 31).
         api.MapGet("/routes/{routeId}/daily", async (
             string routeId,
+            DateOnly? date,
             int? days,
             [FromServices] ReliabilityQueries queries,
             [FromServices] OnTimePolicy policy,
             [FromServices] TimeProvider clock,
             CancellationToken cancellationToken) =>
         {
-            var to = BrisbaneTime.Today(clock);
+            var to = date ?? BrisbaneTime.Today(clock);
             var from = to.AddDays(-(Math.Clamp(days ?? 7, 1, 31) - 1));
             return TypedResults.Ok(await queries.DailyOnTimeAsync(
                 routeId, from, to, policy, clock.GetUtcNow(), cancellationToken));
@@ -69,16 +70,17 @@ public static class ReliabilityEndpoints
             TypedResults.Ok(await queries.StopsByRouteAsync(
                 routeId, date ?? BrisbaneTime.Today(clock), policy, clock.GetUtcNow(), cancellationToken)));
 
-        // Summary performance for one route over N days (default 7, max 31), including percentiles.
+        // Summary for one route over the N days ending on `date` (default today, 7 days, max 31), with percentiles.
         api.MapGet("/routes/{routeId}", async (
             string routeId,
+            DateOnly? date,
             int? days,
             [FromServices] ReliabilityQueries queries,
             [FromServices] OnTimePolicy policy,
             [FromServices] TimeProvider clock,
             CancellationToken cancellationToken) =>
         {
-            var to = BrisbaneTime.Today(clock);
+            var to = date ?? BrisbaneTime.Today(clock);
             var from = to.AddDays(-(Math.Clamp(days ?? 7, 1, 31) - 1));
             var summary = await queries.RouteSummaryAsync(
                 routeId, from, to, policy, clock.GetUtcNow(), cancellationToken);

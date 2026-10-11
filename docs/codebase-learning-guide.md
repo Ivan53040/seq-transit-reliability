@@ -267,10 +267,11 @@
      INSERT INTO gtfs_trip SELECT * FROM stage_trip;
      ```
   4. 提交交易：`transaction.CommitAsync()`。
-* **為什麼這能保證零中斷？**
-  * 仰賴 PostgreSQL 的 **MVCC（多版本併發控制）**。
-  * 在交易提交之前，正在並發讀取 API 的連線讀取的完全是「舊版本的完整資料」。
-  * 交易提交瞬間，新資料一次性替換可見，**API 永遠不會看到半載入的資料狀態**。
+* **為什麼 API 不會看到半載入的課表？**
+  * 所有寫入都在同一個交易裡，提交前其他連線看不到任何新資料。
+  * 注意：`TRUNCATE` 不是一般的 MVCC 刪除，它會拿 **ACCESS EXCLUSIVE 鎖**。交易進行中，API 對 `gtfs_*` 的查詢會**排隊等待**，而不是讀到舊資料；提交瞬間鎖釋放，查詢直接看到完整的新課表。
+  * 因為 COPY 進暫存表的耗時步驟發生在 `TRUNCATE` 之前，鎖只持有「換表」那一小段（幾百毫秒），所以實務上只是一次短暫等待，**API 永遠不會看到空表或半載入的資料**。
+  * 如果要做到完全不擋讀取，可以改用「兩張表 + `ALTER TABLE ... RENAME`」或 `DELETE` + `INSERT`（代價是表膨脹，需要 VACUUM）。
 
 ---
 
@@ -305,7 +306,7 @@
   * **P90 延誤 (90th Percentile Delay)**：代表「在最糟糕的 10% 情況下，通勤者需要預留多少緩衝時間才不會遲到」。
 * **資料庫端高效運算（In-Database Aggregation via `percentile_cont`）**：
   * **常見新手錯誤**：把一週幾萬筆資料全部撈回 C# 應用程式記憶體中，再用 LINQ 排序算百分位數（造成龐大網路頻寬消耗與記憶體 GC 壓力）。
-  * **架構最佳實踐**：利用 PostgreSQL 原生高階統計聚合函式 `percentile_cont(0.5) WITHIN GROUP (ORDER BY delay)`，在資料庫引擎層直接利用索引極速算出結果。在我們的測試中，一週的數據計算僅需 **0.06 毫秒**！
+  * **架構最佳實踐**：利用 PostgreSQL 原生高階統計聚合函式 `percentile_cont(0.5) WITHIN GROUP (ORDER BY delay)`，在資料庫引擎層直接算出結果，只把一列彙總傳回應用程式。實際耗時請用 `EXPLAIN ANALYZE` 在收滿一週資料後量測，並把數字記在 `docs/decisions.md`。
 
 ---
 
@@ -360,15 +361,20 @@
 * **技術原理**：
   * S3 是靜態物件儲存桶（Object Store），不是傳統的 Web Server（如 Nginx 或 Apache），它裡面根本沒有一個叫做 `/routes/66-1` 的真實物理檔案。
   * 當使用者直接在網址列輸入深層連結（Deep Link）時，S3 找不到該物件，預設會回傳 404（或若無 List 權限時回傳 403）。
-* **AWS 雲端架構解法（CloudFront Custom Error Responses）**：
-  * 在 CDK 的 `seq-transit-stack.ts` 中，我們在 `SiteDistribution` 加上了自訂錯誤回應規則：
-    ```typescript
-    errorResponses: [
-      { httpStatus: 404, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: Duration.seconds(0) },
-      { httpStatus: 403, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: Duration.seconds(0) },
-    ]
+* **AWS 雲端架構解法（CloudFront Function 改寫路徑）**：
+  * 常見做法是在 distribution 加 `errorResponses`（404/403 → 200 `/index.html`），但這個設定是**整個 distribution 共用**的，`/api/*` 的 404 也會被改成 200 + HTML，前端就無法分辨「找不到路線」和「連不上 API」。
+  * 所以我們改在預設（S3）behavior 掛一個 viewer-request 的 **CloudFront Function**：路徑最後一段沒有副檔名（例如 `/routes/66-1`）就改寫成 `/index.html`；`/assets/index.js` 這類靜態檔照常回傳。`/api/*` 走另一個 behavior，完全不受影響：
+    ```javascript
+    function handler(event) {
+      var request = event.request;
+      var lastSegment = request.uri.split('/').pop();
+      if (lastSegment.indexOf('.') === -1) {
+        request.uri = '/index.html';
+      }
+      return request;
+    }
     ```
-  * 當邊緣節點遇到 404/403 時，會立刻以 HTTP 200 回傳 `/index.html`，交由瀏覽器端的 **React Router** 解讀路徑並渲染出正確的 `<RoutePage />`，完美解決單頁應用程式（SPA）在無伺服器靜態主機上的路由痛點。
+  * 瀏覽器拿到 `index.html` 後，由 **React Router** 解讀網址並渲染出正確的 `<RoutePage />`。`infra/test` 有一條斷言確保 distribution 沒有 `CustomErrorResponses`。
 
 ---
 

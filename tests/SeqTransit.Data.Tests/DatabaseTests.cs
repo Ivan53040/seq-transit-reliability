@@ -341,6 +341,42 @@ public sealed class DatabaseTests(PostgresFixture database) : IAsyncLifetime
         Assert.Equal(0.0, bus.OnTimeRate);
     }
 
+    [Fact]
+    public async Task RouteSummaryAsync_reports_no_rate_when_nothing_was_observed()
+    {
+        await new StaticGtfsLoader(database.DataSource).LoadAsync(
+            new StaticGtfsPackage([new GtfsRoute("66-1", "66", "RBWH - UQ Lakes", 3)], [], []),
+            CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var summary = await new ReliabilityQueries(db).RouteSummaryAsync("66-1", Day, Day, OnTimePolicy.Default, T0, CancellationToken.None);
+
+        Assert.NotNull(summary);
+        Assert.Equal(0, summary.ObservedStops);
+        Assert.Null(summary.OnTimeRate);
+        Assert.Null(summary.MedianDelaySeconds);
+        Assert.Null(summary.P90DelaySeconds);
+    }
+
+    [Fact]
+    public async Task Routes_missing_from_the_timetable_are_reported_as_unknown_mode()
+    {
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(
+            Batch(T0, [Observation(1, delay: 0, feedAt: T0, eventTime: T0.AddMinutes(-10), routeId: "ADDED-1")]),
+            CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var queries = new ReliabilityQueries(db);
+
+        var route = Assert.Single(await queries.OnTimeByRouteAsync(Day, OnTimePolicy.Default, T0, CancellationToken.None));
+        Assert.Equal(ReliabilityQueries.UnknownRouteType, route.RouteType);
+
+        var mode = Assert.Single(await queries.ModesOnTimeAsync(Day, OnTimePolicy.Default, T0, CancellationToken.None));
+        Assert.Equal(ReliabilityQueries.UnknownRouteType, mode.RouteType);
+        Assert.Equal("Unknown", mode.ModeName);
+    }
+
     private static StopObservation Observation(
         int sequence,
         int delay,

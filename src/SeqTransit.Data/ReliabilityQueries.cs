@@ -40,10 +40,10 @@ public sealed record RouteSummaryResponse(
     DateOnly ToDate,
     int ObservedStops,
     int OnTimeStops,
-    double OnTimeRate,
-    double AverageDelaySeconds,
-    double MedianDelaySeconds,
-    double P90DelaySeconds,
+    double? OnTimeRate,
+    double? AverageDelaySeconds,
+    double? MedianDelaySeconds,
+    double? P90DelaySeconds,
     int CancelledTrips);
 
 public sealed record RouteHourPerformance(
@@ -87,6 +87,9 @@ public sealed record SnapshotSummary(
 /// </remarks>
 public sealed class ReliabilityQueries(TransitDbContext db)
 {
+    /// <summary>Route type reported for routes missing from the static timetable (added trips, stale GTFS).</summary>
+    public const int UnknownRouteType = -1;
+
     public async Task<IReadOnlyList<RouteOnTime>> OnTimeByRouteAsync(
         DateOnly serviceDate, OnTimePolicy policy, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -118,7 +121,7 @@ public sealed class ReliabilityQueries(TransitDbContext db)
                 var staticRoute = staticRoutes.GetValueOrDefault(g.RouteId);
                 var shortName = staticRoute?.RouteShortName ?? g.RouteId;
                 var longName = staticRoute?.RouteLongName ?? string.Empty;
-                var routeType = staticRoute?.RouteType ?? 3;
+                var routeType = staticRoute?.RouteType ?? UnknownRouteType;
                 return new RouteOnTime(
                     g.RouteId,
                     shortName,
@@ -277,6 +280,10 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             return null;
         }
 
+        // With no observed stops there is no rate or delay to report: return null rather than a
+        // misleading 0% (for example, a weekday-only route viewed over a weekend).
+        var hasData = stat.ObservedStops > 0;
+
         var cancelledTrips = await db.TripCancellations
             .AsNoTracking()
             .Where(c => c.RouteId == routeId && c.ServiceDate >= from && c.ServiceDate <= to)
@@ -286,15 +293,15 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             routeId,
             staticRoute?.RouteShortName ?? routeId,
             staticRoute?.RouteLongName ?? string.Empty,
-            staticRoute?.RouteType ?? 3,
+            staticRoute?.RouteType ?? UnknownRouteType,
             from,
             to,
             stat.ObservedStops,
             stat.OnTimeStops,
-            Rate(stat.OnTimeStops, stat.ObservedStops),
-            Math.Round(stat.AverageDelaySeconds, 1),
-            Math.Round(stat.MedianDelaySeconds, 1),
-            Math.Round(stat.P90DelaySeconds, 1),
+            hasData ? Rate(stat.OnTimeStops, stat.ObservedStops) : null,
+            hasData ? Math.Round(stat.AverageDelaySeconds, 1) : null,
+            hasData ? Math.Round(stat.MedianDelaySeconds, 1) : null,
+            hasData ? Math.Round(stat.P90DelaySeconds, 1) : null,
             cancelledTrips);
     }
 
@@ -382,7 +389,7 @@ public sealed class ReliabilityQueries(TransitDbContext db)
 
         var rows = await db.Database.SqlQuery<ModeReliabilityStatsRow>($"""
             SELECT
-                coalesce(r.route_type, 3)::int AS "RouteType",
+                coalesce(r.route_type, {UnknownRouteType})::int AS "RouteType",
                 count(*)::int AS "ObservedStops",
                 count(*) FILTER (WHERE coalesce(o.arrival_delay_s, o.departure_delay_s) >= {early}
                                   AND coalesce(o.arrival_delay_s, o.departure_delay_s) <= {late})::int AS "OnTimeStops",
@@ -417,6 +424,7 @@ public sealed class ReliabilityQueries(TransitDbContext db)
         2 => "Train",
         3 => "Bus",
         4 => "Ferry",
+        UnknownRouteType => "Unknown",
         _ => "Other"
     };
 }

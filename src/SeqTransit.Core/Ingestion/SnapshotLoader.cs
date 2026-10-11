@@ -47,6 +47,7 @@ public sealed class SnapshotLoader(
 
         var fold = new ObservationFold();
         var loaded = new List<LoadedSnapshot>();
+        var skipped = new List<LoadedSnapshot>();
         var unreadable = 0;
 
         foreach (var key in keys.Take(options.MaxSnapshotsPerBatch))
@@ -65,9 +66,11 @@ public sealed class SnapshotLoader(
             }
             catch (InvalidProtocolBufferException)
             {
-                // The fetcher validates before storing, so this should not happen. Skip it rather
-                // than block every later snapshot; newer snapshots move the watermark past it.
+                // The fetcher validates before storing, so this should not happen. Record it with zero
+                // counts so the watermark still moves past it: a run of unreadable snapshots would
+                // otherwise be listed again on every run and block everything after it.
                 unreadable++;
+                skipped.Add(new LoadedSnapshot(feedTimestamp, key, 0, 0, 0));
                 continue;
             }
 
@@ -80,20 +83,21 @@ public sealed class SnapshotLoader(
                 snapshot.Cancellations.Count));
         }
 
-        if (loaded.Count == 0)
+        var snapshots = loaded.Concat(skipped).ToList();
+        if (snapshots.Count == 0)
         {
             return new LoadResult(0, unreadable, 0, 0, watermark, moreAvailable);
         }
 
         var saved = await observations.SaveAsync(
-            new LoadBatch(fold.Observations, fold.Cancellations, loaded), cancellationToken);
+            new LoadBatch(fold.Observations, fold.Cancellations, snapshots), cancellationToken);
 
         return new LoadResult(
             loaded.Count,
             unreadable,
             saved.ObservationRowsWritten,
             saved.CancellationRowsWritten,
-            loaded.Max(s => s.FeedTimestamp),
+            snapshots.Max(s => s.FeedTimestamp),
             moreAvailable);
     }
 }

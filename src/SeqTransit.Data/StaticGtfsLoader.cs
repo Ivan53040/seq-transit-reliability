@@ -17,11 +17,13 @@ public sealed class StaticGtfsLoader(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
-        // 1. Create temporary staging tables
+        // 1. Create temporary staging tables. INCLUDING DEFAULTS (not ALL) leaves out the primary
+        // keys, so a duplicate id in the file reaches the swap below, where ON CONFLICT keeps the
+        // first row instead of failing the whole COPY.
         await using (var cmd = new NpgsqlCommand("""
-            CREATE TEMP TABLE stage_route (LIKE gtfs_route INCLUDING ALL) ON COMMIT DROP;
-            CREATE TEMP TABLE stage_stop (LIKE gtfs_stop INCLUDING ALL) ON COMMIT DROP;
-            CREATE TEMP TABLE stage_trip (LIKE gtfs_trip INCLUDING ALL) ON COMMIT DROP;
+            CREATE TEMP TABLE stage_route (LIKE gtfs_route INCLUDING DEFAULTS) ON COMMIT DROP;
+            CREATE TEMP TABLE stage_stop (LIKE gtfs_stop INCLUDING DEFAULTS) ON COMMIT DROP;
+            CREATE TEMP TABLE stage_trip (LIKE gtfs_trip INCLUDING DEFAULTS) ON COMMIT DROP;
             """, connection, transaction))
         {
             await cmd.ExecuteNonQueryAsync(cancellationToken);
@@ -86,7 +88,8 @@ public sealed class StaticGtfsLoader(NpgsqlDataSource dataSource)
             await writer.CompleteAsync(cancellationToken);
         }
 
-        // 5. Swap live tables atomically in the transaction
+        // 5. Swap live tables in the transaction. TRUNCATE takes an ACCESS EXCLUSIVE lock, so API
+        // reads of these tables wait (they never see a half-loaded timetable) until the commit.
         await using (var swapCmd = new NpgsqlCommand("""
             TRUNCATE gtfs_route, gtfs_stop, gtfs_trip;
             INSERT INTO gtfs_route SELECT * FROM stage_route ON CONFLICT (route_id) DO NOTHING;

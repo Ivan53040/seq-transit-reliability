@@ -91,6 +91,25 @@ public class SnapshotLoaderTests
         Assert.Equal(Now.AddMinutes(-1), result.Watermark);
     }
 
+    [Fact]
+    public async Task A_batch_of_only_unreadable_objects_still_moves_the_watermark()
+    {
+        var store = new InMemorySnapshotStore();
+        await store.PutAsync(SnapshotKeys.For(Now.AddMinutes(-3)), [0xFF, 0xFF, 0xFF], CancellationToken.None);
+        await store.PutAsync(SnapshotKeys.For(Now.AddMinutes(-2)), [0xFF, 0xFF, 0xFF], CancellationToken.None);
+        await PutSnapshot(store, Now.AddMinutes(-1), delay: 5);
+        var database = new InMemoryObservationStore();
+
+        var first = await Loader(store, database, batchSize: 2).LoadBatchAsync(CancellationToken.None);
+        Assert.Equal(0, first.SnapshotsLoaded);
+        Assert.Equal(2, first.SnapshotsUnreadable);
+        Assert.Equal(Now.AddMinutes(-2), first.Watermark);
+
+        var second = await Loader(store, database, batchSize: 2).LoadBatchAsync(CancellationToken.None);
+        Assert.Equal(1, second.SnapshotsLoaded);
+        Assert.Equal(Now.AddMinutes(-1), second.Watermark);
+    }
+
     private static SnapshotLoader Loader(InMemorySnapshotStore store, InMemoryObservationStore database, int batchSize = 15) =>
         new(store, database, new ManualTimeProvider(Now), new LoadOptions { MaxSnapshotsPerBatch = batchSize });
 

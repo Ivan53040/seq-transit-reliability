@@ -369,6 +369,16 @@ tbody th {
   color: var(--poor);
 }
 
+.rate-muted {
+  color: var(--muted);
+}
+
+.rate-low-sample-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+
 .board-empty {
   color: var(--muted);
 }
@@ -463,6 +473,11 @@ tbody th {
   color: inherit;
   text-decoration: none;
   display: block;
+}
+
+.route-cell-link:focus-visible {
+  outline: 2px solid var(--jacaranda);
+  outline-offset: 2px;
 }
 
 .rate-figures {

@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
+using SeqTransit.Core;
 using SeqTransit.Core.Ingestion;
 using SeqTransit.Core.Model;
 using SeqTransit.Core.Reliability;
@@ -42,7 +43,9 @@ public sealed class PostgresApiCollection : ICollectionFixture<PostgresFixture>
 [Trait("Category", "Integration")]
 public sealed class ApiTests : IAsyncLifetime
 {
-    private static readonly DateOnly Day = DateOnly.FromDateTime(DateTime.UtcNow);
+    // The API decides "today" in Brisbane time (UTC+10), so the seeded day must too; a UTC date
+    // would fall on "yesterday" between 00:00 and 10:00 Brisbane time.
+    private static readonly DateOnly Day = BrisbaneTime.Today(TimeProvider.System);
     private static readonly DateTimeOffset T0 = DateTimeOffset.UtcNow;
 
     private readonly PostgresFixture _fixture;
@@ -142,6 +145,20 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(45.0, doc.GetProperty("averageDelaySeconds").GetDouble());
         Assert.Equal(45.0, doc.GetProperty("medianDelaySeconds").GetDouble());
         Assert.Equal(1, doc.GetProperty("cancelledTrips").GetInt32());
+    }
+
+    [Fact]
+    public async Task Route_summary_and_daily_trend_end_on_the_requested_date()
+    {
+        var earlier = Day.AddDays(-10);
+
+        var summary = await _client.GetFromJsonAsync<JsonElement>($"/api/routes/66-1?days=7&date={earlier:yyyy-MM-dd}");
+        Assert.Equal($"{earlier:yyyy-MM-dd}", summary.GetProperty("toDate").GetString());
+        Assert.Equal(0, summary.GetProperty("observedStops").GetInt32());
+        Assert.Equal(JsonValueKind.Null, summary.GetProperty("onTimeRate").ValueKind);
+
+        var daily = await _client.GetFromJsonAsync<JsonElement>($"/api/routes/66-1/daily?days=7&date={earlier:yyyy-MM-dd}");
+        Assert.Equal(0, daily.GetArrayLength());
     }
 
     [Fact]

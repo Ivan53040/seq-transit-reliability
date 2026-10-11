@@ -18,6 +18,7 @@ export function formatMode(routeType: number): string {
     case 2: return 'Train';
     case 3: return 'Bus';
     case 4: return 'Ferry';
+    case -1: return 'Unknown';
     default: return 'Transit';
   }
 }
@@ -75,10 +76,11 @@ export interface RouteSummary {
   toDate: string;
   observedStops: number;
   onTimeStops: number;
-  onTimeRate: number;
-  averageDelaySeconds: number;
-  medianDelaySeconds: number;
-  p90DelaySeconds: number;
+  /** Null when no stops were observed in the period. */
+  onTimeRate: number | null;
+  averageDelaySeconds: number | null;
+  medianDelaySeconds: number | null;
+  p90DelaySeconds: number | null;
   cancelledTrips: number;
 }
 
@@ -122,9 +124,11 @@ export async function loadRouteDetail(
   signal?: AbortSignal,
 ): Promise<RouteDetailReport> {
   const abortSignal = signal ?? new AbortController().signal;
+  // Every part of the page is anchored on the same service date, so a shared link always shows the same view.
+  const period = `days=${days}&date=${encodeURIComponent(date)}`;
   const [summary, daily, hours, stops, health] = await Promise.all([
-    get<RouteSummary>(`/api/routes/${encodeURIComponent(routeId)}?days=${days}`, abortSignal),
-    get<DailyOnTime[]>(`/api/routes/${encodeURIComponent(routeId)}/daily?days=${days}`, abortSignal),
+    get<RouteSummary>(`/api/routes/${encodeURIComponent(routeId)}?${period}`, abortSignal),
+    get<DailyOnTime[]>(`/api/routes/${encodeURIComponent(routeId)}/daily?${period}`, abortSignal),
     get<RouteHourPerformance[]>(
       `/api/routes/${encodeURIComponent(routeId)}/hours?date=${encodeURIComponent(date)}`,
       abortSignal,

@@ -2,13 +2,16 @@ import type { DailyOnTime } from '../api';
 
 interface DailyTrendChartProps {
   data: DailyOnTime[];
+  /** First and last service day of the period (yyyy-mm-dd). Every day gets a slot, with or without data. */
+  fromDate: string;
+  toDate: string;
 }
 
-export function DailyTrendChart({ data }: DailyTrendChartProps) {
+export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps) {
   if (data.length === 0) {
     return (
       <div className="chart-empty" role="note">
-        <p>No daily performance data available for this route in the past 7 days.</p>
+        <p>No daily performance data available for this route in these 7 days.</p>
       </div>
     );
   }
@@ -20,14 +23,19 @@ export function DailyTrendChart({ data }: DailyTrendChartProps) {
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
 
+  // One slot per day in the period, so a day without data shows as a gap instead of
+  // silently joining its neighbours.
+  const byDate = new Map(data.map((d) => [d.serviceDate, d]));
+  const slots = datesBetween(fromDate, toDate).map((date) => ({ date, d: byDate.get(date) }));
+
   // Domain: Y-axis from 50% to 100% (or min rate - 10% to 100%)
   const minRate = Math.min(...data.map((d) => d.onTimeRate));
   const yMin = Math.max(0, Math.floor((minRate - 0.05) * 10) / 10);
   const yMax = 1.0;
 
   const getX = (index: number) => {
-    if (data.length <= 1) return padding.left + innerWidth / 2;
-    return padding.left + (index / (data.length - 1)) * innerWidth;
+    if (slots.length <= 1) return padding.left + innerWidth / 2;
+    return padding.left + (index / (slots.length - 1)) * innerWidth;
   };
 
   const getY = (rate: number) => {
@@ -36,13 +44,31 @@ export function DailyTrendChart({ data }: DailyTrendChartProps) {
     return padding.top + innerHeight - normalized * innerHeight;
   };
 
-  // Build path
-  const points = data.map((d, i) => ({ x: getX(i), y: getY(d.onTimeRate), d }));
-  const pathData = points.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`, '');
-  const areaData =
-    points.length > 0
-      ? `${pathData} L ${points[points.length - 1].x} ${padding.top + innerHeight} L ${points[0].x} ${padding.top + innerHeight} Z`
-      : '';
+  // Build the line in runs of consecutive days; a missing day breaks the line.
+  const runs: { x: number; y: number; d: DailyOnTime }[][] = [];
+  let current: { x: number; y: number; d: DailyOnTime }[] = [];
+  slots.forEach((slot, i) => {
+    if (slot.d) {
+      current.push({ x: getX(i), y: getY(slot.d.onTimeRate), d: slot.d });
+    } else if (current.length > 0) {
+      runs.push(current);
+      current = [];
+    }
+  });
+  if (current.length > 0) runs.push(current);
+
+  const points = runs.flat();
+  const baseline = padding.top + innerHeight;
+  const pathData = runs
+    .map((run) => run.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' '))
+    .join(' ');
+  const areaData = runs
+    .filter((run) => run.length > 1)
+    .map(
+      (run) =>
+        `${run.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')} L ${run[run.length - 1].x} ${baseline} L ${run[0].x} ${baseline} Z`,
+    )
+    .join(' ');
 
   // Grid lines
   const gridLevels = [0.6, 0.75, 0.9, 1.0].filter((l) => l >= yMin);
@@ -107,7 +133,6 @@ export function DailyTrendChart({ data }: DailyTrendChartProps) {
         {points.map((p) => {
           const rateColor =
             p.d.onTimeRate >= 0.9 ? 'var(--good)' : p.d.onTimeRate >= 0.75 ? 'var(--fair)' : 'var(--poor)';
-          const dayLabel = formatShortDay(p.d.serviceDate);
 
           return (
             <g key={p.d.serviceDate} className="chart-point">
@@ -115,27 +140,26 @@ export function DailyTrendChart({ data }: DailyTrendChartProps) {
               <text x={p.x} y={p.y - 10} textAnchor="middle" className="chart-val-label" fill="var(--ink)">
                 {Math.round(p.d.onTimeRate * 100)}%
               </text>
-              <text x={p.x} y={padding.top + innerHeight + 20} textAnchor="middle" className="chart-date-label">
-                {dayLabel}
-              </text>
-              <text
-                x={p.x}
-                y={padding.top + innerHeight + 34}
-                textAnchor="middle"
-                className="chart-obs-label"
-                fill="var(--muted)"
-              >
-                {p.d.observedStops} stops
-              </text>
             </g>
           );
         })}
+        {/* Day labels: every day in the period, including days without data */}
+        {slots.map((slot, i) => (
+          <g key={slot.date}>
+            <text x={getX(i)} y={baseline + 20} textAnchor="middle" className="chart-date-label">
+              {formatShortDay(slot.date)}
+            </text>
+            <text x={getX(i)} y={baseline + 34} textAnchor="middle" className="chart-obs-label" fill="var(--muted)">
+              {slot.d ? `${slot.d.observedStops} stops` : 'no data'}
+            </text>
+          </g>
+        ))}
       </svg>
 
       {/* Screen reader table ensuring 100% accessible text presentation */}
       <div className="visually-hidden">
         <table>
-          <caption>Daily on-time rate over the last 7 days</caption>
+          <caption>Daily on-time rate for each day in the period</caption>
           <thead>
             <tr>
               <th scope="col">Date</th>
@@ -145,14 +169,21 @@ export function DailyTrendChart({ data }: DailyTrendChartProps) {
             </tr>
           </thead>
           <tbody>
-            {data.map((d) => (
-              <tr key={d.serviceDate}>
-                <td>{d.serviceDate}</td>
-                <td>{Math.round(d.onTimeRate * 100)}%</td>
-                <td>{d.observedStops}</td>
-                <td>{d.averageDelaySeconds} seconds</td>
-              </tr>
-            ))}
+            {slots.map(({ date, d }) =>
+              d ? (
+                <tr key={date}>
+                  <td>{date}</td>
+                  <td>{Math.round(d.onTimeRate * 100)}%</td>
+                  <td>{d.observedStops}</td>
+                  <td>{d.averageDelaySeconds} seconds</td>
+                </tr>
+              ) : (
+                <tr key={date}>
+                  <td>{date}</td>
+                  <td colSpan={3}>No data</td>
+                </tr>
+              ),
+            )}
           </tbody>
         </table>
       </div>
@@ -163,4 +194,16 @@ export function DailyTrendChart({ data }: DailyTrendChartProps) {
 function formatShortDay(isoDate: string): string {
   const d = new Date(`${isoDate}T00:00:00`);
   return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric' });
+}
+
+/** Every yyyy-mm-dd date from `from` to `to`, inclusive. */
+function datesBetween(from: string, to: string): string[] {
+  const dates: string[] = [];
+  const day = new Date(`${from}T00:00:00Z`);
+  const end = new Date(`${to}T00:00:00Z`);
+  while (day <= end && dates.length < 62) {
+    dates.push(day.toISOString().slice(0, 10));
+    day.setUTCDate(day.getUTCDate() + 1);
+  }
+  return dates;
 }

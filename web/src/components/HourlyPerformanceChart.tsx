@@ -19,10 +19,10 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
 
-  // Sorted hours
+  // A fixed slot for every hour of the day, so hours without data show as gaps rather than
+  // the neighbouring bars sliding together.
   const sorted = [...data].sort((a, b) => a.hour - b.hour);
-  const barCount = sorted.length;
-  const slotWidth = innerWidth / (barCount || 1);
+  const slotWidth = innerWidth / 24;
   const barWidth = Math.max(12, Math.min(28, slotWidth * 0.75));
 
   // Y-axis: 0% to 100%
@@ -77,12 +77,12 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
         })}
 
         {/* Highlight Peak Bands & Render Bars */}
-        {sorted.map((d, i) => {
+        {sorted.map((d) => {
           const isMorningPeak = d.hour >= 7 && d.hour <= 9;
           const isEveningPeak = d.hour >= 16 && d.hour <= 18;
           const isPeak = isMorningPeak || isEveningPeak;
 
-          const xCenter = padding.left + i * slotWidth + slotWidth / 2;
+          const xCenter = padding.left + d.hour * slotWidth + slotWidth / 2;
           const barX = xCenter - barWidth / 2;
           const barY = getY(d.onTimeRate);
           const barH = padding.top + innerHeight - barY;
@@ -120,10 +120,6 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
                 {Math.round(d.onTimeRate * 100)}%
               </text>
 
-              {/* Hour label */}
-              <text x={xCenter} y={padding.top + innerHeight + 18} textAnchor="middle" className="chart-hour-label">
-                {formatHour(d.hour)}
-              </text>
 
               {/* Observation count */}
               <text x={xCenter} y={padding.top + innerHeight + 32} textAnchor="middle" className="chart-obs-label">
@@ -132,6 +128,18 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
             </g>
           );
         })}
+        {/* Hour axis: every third hour, whether or not it has data */}
+        {Array.from({ length: 8 }, (_, i) => i * 3).map((hour) => (
+          <text
+            key={hour}
+            x={padding.left + hour * slotWidth + slotWidth / 2}
+            y={padding.top + innerHeight + 18}
+            textAnchor="middle"
+            className="chart-hour-label"
+          >
+            {formatHour(hour)}
+          </text>
+        ))}
       </svg>
 
       {/* Screen reader table for full accessibility compliance */}

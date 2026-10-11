@@ -160,6 +160,23 @@ export class SeqTransitStack extends Stack {
       enableAcceptEncodingBrotli: true,
     });
 
+    // Client-side routes (/routes/66-1) have no object in S3. Rewrite any extensionless path to
+    // /index.html at the viewer edge so React Router can render it. This only runs on the default
+    // (S3) behaviour; distribution-level errorResponses would also rewrite /api/* 404s into HTML.
+    const spaRewrite = new cloudfront.Function(this, 'SpaRewriteFunction', {
+      comment: 'Serve index.html for client-side routes',
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      code: cloudfront.FunctionCode.fromInline(`
+function handler(event) {
+  var request = event.request;
+  var lastSegment = request.uri.split('/').pop();
+  if (lastSegment.indexOf('.') === -1) {
+    request.uri = '/index.html';
+  }
+  return request;
+}`),
+    });
+
     const apiDomain = Fn.select(2, Fn.split('/', httpApi.apiEndpoint));
     const distribution = new cloudfront.Distribution(this, 'SiteDistribution', {
       comment: 'SEQ Transit Reliability',
@@ -169,6 +186,9 @@ export class SeqTransitStack extends Stack {
         origin: origins.S3BucketOrigin.withOriginAccessControl(site),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        functionAssociations: [
+          { function: spaRewrite, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+        ],
       },
       additionalBehaviors: {
         '/api/*': {
@@ -179,20 +199,6 @@ export class SeqTransitStack extends Stack {
           originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
         },
       },
-      errorResponses: [
-        {
-          httpStatus: 404,
-          responseHttpStatus: 200,
-          responsePagePath: '/index.html',
-          ttl: Duration.seconds(0),
-        },
-        {
-          httpStatus: 403,
-          responseHttpStatus: 200,
-          responsePagePath: '/index.html',
-          ttl: Duration.seconds(0),
-        },
-      ],
     });
 
     new s3deploy.BucketDeployment(this, 'DeploySite', {

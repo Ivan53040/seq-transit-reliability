@@ -82,6 +82,18 @@ test('API is throttled and routed through CloudFront under /api/*', () => {
   });
 });
 
+test('client-side routes fall back to index.html without rewriting API errors', () => {
+  template.resourceCountIs('AWS::CloudFront::Function', 1);
+  template.hasResourceProperties('AWS::CloudFront::Distribution', {
+    DistributionConfig: Match.objectLike({
+      DefaultCacheBehavior: Match.objectLike({
+        FunctionAssociations: [Match.objectLike({ EventType: 'viewer-request' })],
+      }),
+      CustomErrorResponses: Match.absent(),
+    }),
+  });
+});
+
 test('alarms and a monthly budget email the alert address', () => {
   template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
   template.hasResourceProperties('AWS::SNS::Subscription', { Protocol: 'email', Endpoint: 'alerts@example.com' });

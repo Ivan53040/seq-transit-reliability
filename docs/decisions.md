@@ -94,6 +94,35 @@ cheaper per GB-second than x86.
 2. Trips without a `vehicle_id` are retained, rather than dropped.
 
 **Why (discovered in real Translink SEQ data):**
-- **Train compatibility:** Queensland Rail suburban and interurban train routes (`CLSH`, `SPRP`, `CAIP`, `IPNA`, `BRBD`, etc., operator 5167) NEVER report a `vehicle_id` in Translink's GTFS-RT feed, but they DO report authentic, variable arrival and departure delays. Dropping trips without `vehicle_id` would eliminate 100% of train services across South East Queensland.
+- **Train compatibility:** Queensland Rail suburban and interurban train routes (`CLSH`, `SPRP`, `CAIP`, `IPNA`, `BRBD`, etc., operator 5167) mostly do not report a `vehicle_id` in Translink's GTFS-RT feed (in a sample of 10 snapshots on a Sunday evening, about 89% of their stop updates had none), but they DO report authentic, variable arrival and departure delays. Dropping trips without `vehicle_id` would eliminate most train services across South East Queensland.
 - **Absurd delay rejection:** Isolated observations report astronomical delays (such as bus route 100 reporting 4,137s / 68-minute delay on ghost runs or stale tracking hardware). Excluding `|delay| > 3600s` prevents outliers from skewing average route delay figures.
 
+
+## 10. Feed facts (preliminary: about 1.8 hours of data on a Sunday evening, 11 Oct 2026)
+
+Re-check these against a full weekday before relying on them.
+
+- **Snapshot size:** about 450 KB each. At one per minute that is roughly 650 MB a day, so 14 days of
+  retention is about 9 GB in S3. Worth checking whether gzip is worth adding.
+- **Update rate:** 93 snapshots over about 107 minutes, so a new feed version roughly every 70 seconds rather
+  than every minute. The fetch function rewrites the same key when the timestamp hasn't moved.
+- **Identifiers:** every trip in the sample had `start_date`, and every stop update had `stop_sequence`, so the
+  service-date fallback and the "no stop_sequence" skip rarely apply.
+- **Trip relationships:** of 6,097 sampled trips, 5,215 were `SCHEDULED`, 813 `REPLACEMENT` and 69 `ADDED`; none
+  were `CANCELED` or `DELETED`. If that holds on weekdays, Translink signals cancellations some other way (for
+  example, every stop `SKIPPED`), and the cancellation counts will stay at zero until that is handled.
+- **Exactly-zero delays:** about 5% of bus stop updates, 15% of untracked rail stop updates, and 46% of tracked
+  rail/tram stop updates reported a delay of exactly 0. Re-run the Phase 2 "share_exactly_zero" query grouped by
+  `route_type` on a full day before deciding whether any group needs filtering.
+
+## 11. Honest numbers on the dashboard
+
+**Choice.**
+1. A rate with no observations is `null` ("No data"), never 0%.
+2. Routes with fewer than 20 observed stops stay on the board but are listed after the others and marked
+   "Low sample", in grey.
+3. Routes missing from the static timetable are reported as route type `-1` ("Unknown"), not as buses.
+4. Charts keep a slot for every day and every hour, so a gap in the data shows as a gap.
+
+**Why.** Sorting worst-first puts tiny samples at the top, a 0% for "nothing observed" reads as a total failure,
+and closing up empty hours or days hides exactly the periods a reader should ask about.

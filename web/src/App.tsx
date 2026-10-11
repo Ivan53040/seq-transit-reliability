@@ -13,6 +13,9 @@ import { sampleDay } from './sample';
 
 const ROWS_SHOWN_AT_FIRST = 25;
 
+/** Below this many observed stops a route's rate is mostly noise, so it is listed after the others. */
+export const MIN_RELIABLE_SAMPLE = 20;
+
 type Load =
   | { state: 'loading' }
   | { state: 'error'; message: string }
@@ -183,7 +186,14 @@ function RouteBoard({ report, date }: { report: DayReport; date: string }) {
     [report.cancellations],
   );
 
-  const matches = report.routes.filter((r) => {
+  // Keep the API's worst-first order, but move routes with too few observations to the end so a
+  // route seen at 2 stops can't top the board with a meaningless 0% or 50%.
+  const ranked = [
+    ...report.routes.filter((r) => r.observedStops >= MIN_RELIABLE_SAMPLE),
+    ...report.routes.filter((r) => r.observedStops < MIN_RELIABLE_SAMPLE),
+  ];
+
+  const matches = ranked.filter((r) => {
     const modeName = formatMode(r.routeType).toLowerCase();
     if (mode !== 'all' && modeName !== mode) return false;
     const q = query.trim().toLowerCase();
@@ -294,24 +304,15 @@ function RouteRow({
   cancelledTrips: number;
   onRowClick: () => void;
 }) {
-  const band = route.onTimeRate >= 0.9 ? 'good' : route.onTimeRate >= 0.75 ? 'fair' : 'poor';
+  const lowSample = route.observedStops < MIN_RELIABLE_SAMPLE;
+  const band = lowSample ? 'muted' : route.onTimeRate >= 0.9 ? 'good' : route.onTimeRate >= 0.75 ? 'fair' : 'poor';
 
+  // The route link in the first cell is the keyboard and screen-reader target; clicking anywhere
+  // else on the row is a mouse convenience. Keeping the row a plain <tr> preserves table semantics.
   return (
-    <tr
-      className="clickable-row"
-      tabIndex={0}
-      role="link"
-      aria-label={`View performance for Route ${route.routeShortName || route.routeId}, ${Math.round(route.onTimeRate * 100)}% on time`}
-      onClick={onRowClick}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onRowClick();
-        }
-      }}
-    >
+    <tr className="clickable-row" onClick={onRowClick}>
       <th scope="row">
-        <Link to={link} className="route-cell-link" tabIndex={-1}>
+        <Link to={link} className="route-cell-link" onClick={(e) => e.stopPropagation()}>
           <div className="route-cell">
             <div className="route-header-line">
               <span className="route-badge">{route.routeShortName || route.routeId}</span>
@@ -333,6 +334,7 @@ function RouteRow({
           <div className="rate-figures">
             <span className="rate-value">{percent(route.onTimeRate)}</span>
             <span className="rate-sample-count">({route.observedStops.toLocaleString('en-AU')} stops)</span>
+            {lowSample && <span className="rate-low-sample-label">Low sample</span>}
           </div>
         </div>
       </td>

@@ -8,8 +8,11 @@ using SeqTransit.Data;
 //   dotnet run --project src/SeqTransit.Local -- load    # load stored snapshots into Postgres
 //   dotnet run --project src/SeqTransit.Local -- run     # fetch every minute, load every 5 minutes (Ctrl+C to stop)
 //
-// Settings (environment variables): SNAPSHOT_DIR (default .local-snapshots), FEED_URL,
-// DB_CONNECTION_STRING (default: the docker-compose database).
+//   dotnet run --project src/SeqTransit.Local -- load-gtfs [zip]  # replace the static timetable
+//
+// Settings (environment variables): SNAPSHOT_DIR (default .local-snapshots), FEED_URL, and either
+// DB_CONNECTION_STRING (default: the docker-compose database) or DB_HOST + DB_USER + AWS_REGION
+// to sign in to Aurora with IAM (for example, to run load-gtfs against the deployed database).
 
 const string DefaultConnection = "Host=localhost;Port=5433;Database=seq_transit;Username=postgres;Password=postgres";
 const string TranslinkTripUpdates = "https://gtfsrt.api.translink.com.au/api/realtime/SEQ/TripUpdates";
@@ -17,7 +20,11 @@ const string TranslinkTripUpdates = "https://gtfsrt.api.translink.com.au/api/rea
 var command = args.FirstOrDefault() ?? "run";
 var snapshotDirectory = Environment.GetEnvironmentVariable("SNAPSHOT_DIR") ?? ".local-snapshots";
 var feedUrl = new Uri(Environment.GetEnvironmentVariable("FEED_URL") ?? TranslinkTripUpdates);
-var connectionString = Environment.GetEnvironmentVariable("DB_CONNECTION_STRING") ?? DefaultConnection;
+var databaseOptions = DatabaseOptions.FromEnvironment();
+if (databaseOptions.UsesIamAuthentication && string.IsNullOrWhiteSpace(databaseOptions.Host))
+{
+    databaseOptions.ConnectionString = DefaultConnection;
+}
 
 using var cancel = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
@@ -30,7 +37,7 @@ var store = new FileSnapshotStore(snapshotDirectory);
 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
 var fetcher = new SnapshotFetcher(http, store, TimeProvider.System);
 
-await using var dataSource = TransitDataSource.Create(new DatabaseOptions { ConnectionString = connectionString });
+await using var dataSource = TransitDataSource.Create(databaseOptions);
 var loader = new SnapshotLoader(store, new ObservationWriter(dataSource), TimeProvider.System, new LoadOptions());
 
 try
@@ -48,7 +55,10 @@ try
             break;
         case "load-gtfs":
             var zipPath = args.ElementAtOrDefault(1) ?? ".gtfs-cache/SEQ_GTFS.zip";
-            await LoadGtfs(zipPath);
+            if (!await LoadGtfs(zipPath))
+            {
+                return 1;
+            }
             break;
         default:
             Console.Error.WriteLine($"Unknown command '{command}'. Use fetch, load, run or load-gtfs.");
@@ -105,12 +115,12 @@ async Task RunContinuously()
     while (await timer.WaitForNextTickAsync(cancel.Token));
 }
 
-async Task LoadGtfs(string path)
+async Task<bool> LoadGtfs(string path)
 {
     if (!File.Exists(path))
     {
         Console.Error.WriteLine($"File not found: {path}");
-        return;
+        return false;
     }
     Console.WriteLine($"Reading static GTFS archive from {path}...");
     var package = StaticGtfsReader.ReadFile(path);
@@ -120,5 +130,6 @@ async Task LoadGtfs(string path)
     var gtfsLoader = new StaticGtfsLoader(dataSource);
     var res = await gtfsLoader.LoadAsync(package, cancel.Token);
     Console.WriteLine($"Done: Loaded {res.RoutesLoaded} routes, {res.StopsLoaded} stops, {res.TripsLoaded} trips.");
+    return true;
 }
 

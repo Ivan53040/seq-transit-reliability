@@ -101,7 +101,11 @@ export function RoutePage() {
 
           <section className="analytics-grid">
             <div className="analytics-card">
-              <DailyTrendChart data={load.report.daily} />
+              <DailyTrendChart
+                data={load.report.daily}
+                fromDate={load.report.summary.fromDate}
+                toDate={load.report.summary.toDate}
+              />
             </div>
 
             <div className="analytics-card">
@@ -179,30 +183,30 @@ function RouteHeader({
 }
 
 function RouteKpiCards({ summary }: { summary: RouteDetailReport['summary'] }) {
-  const band = summary.onTimeRate >= 0.9 ? 'good' : summary.onTimeRate >= 0.75 ? 'fair' : 'poor';
+  const rate = summary.onTimeRate;
+  const band = rate === null ? 'none' : rate >= 0.9 ? 'good' : rate >= 0.75 ? 'fair' : 'poor';
+  const period = `${formatShortDate(summary.fromDate)} – ${formatShortDate(summary.toDate)}`;
 
   return (
-    <section className="kpi-grid" aria-label="7-Day Performance Highlights">
+    <section className="kpi-grid" aria-label={`Performance for ${period}`}>
       <div className="kpi-card">
         <span className="kpi-label">7-Day On-Time Rate</span>
-        <div className={`kpi-value rate-${band}`}>
-          {Math.round(summary.onTimeRate * 100)}%
-        </div>
+        <div className={`kpi-value rate-${band}`}>{rate === null ? 'No data' : `${Math.round(rate * 100)}%`}</div>
         <span className="kpi-hint">
-          {summary.observedStops.toLocaleString('en-AU')} stops observed
+          {summary.observedStops.toLocaleString('en-AU')} stops observed, {period}
         </span>
       </div>
 
       <div className="kpi-card">
         <span className="kpi-label">Typical (Median) Delay</span>
-        <div className="kpi-value">{formatDelay(summary.medianDelaySeconds)}</div>
-        <span className="kpi-hint">50% of trips arrive within this delay</span>
+        <div className="kpi-value">{formatOptionalDelay(summary.medianDelaySeconds)}</div>
+        <span className="kpi-hint">Half of observed stops were within this delay</span>
       </div>
 
       <div className="kpi-card">
         <span className="kpi-label">P90 Risk Delay</span>
-        <div className="kpi-value">{formatDelay(summary.p90DelaySeconds)}</div>
-        <span className="kpi-hint">90% of trips arrive within this buffer</span>
+        <div className="kpi-value">{formatOptionalDelay(summary.p90DelaySeconds)}</div>
+        <span className="kpi-hint">90% of observed stops were within this delay</span>
       </div>
 
       <div className="kpi-card">
@@ -214,7 +218,7 @@ function RouteKpiCards({ summary }: { summary: RouteDetailReport['summary'] }) {
             summary.cancelledTrips
           )}
         </div>
-        <span className="kpi-hint">Recorded this week</span>
+        <span className="kpi-hint">Recorded {period}</span>
       </div>
     </section>
   );
@@ -275,6 +279,14 @@ function formatDelay(seconds: number): string {
   if (Math.abs(minutes) < 0.1) return 'on time';
   const sign = minutes > 0 ? '+' : '−';
   return `${sign}${Math.abs(minutes).toFixed(1)} min`;
+}
+
+function formatOptionalDelay(seconds: number | null): string {
+  return seconds === null ? '—' : formatDelay(seconds);
+}
+
+function formatShortDate(isoDate: string): string {
+  return new Date(`${isoDate}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
 }
 
 function formatDay(isoDate: string): string {
