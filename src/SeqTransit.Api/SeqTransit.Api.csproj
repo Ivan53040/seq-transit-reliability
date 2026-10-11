@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    ASP.NET Core minimal API. Runs on Kestrel locally; in AWS the same app runs in Lambda
+    behind API Gateway (handler: SeqTransit.Api). AddAWSLambdaHosting does nothing outside Lambda.
+  -->
+
+  <PropertyGroup>
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+    <AWSProjectType>Lambda</AWSProjectType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Amazon.Lambda.AspNetCoreServer.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SeqTransit.Data\SeqTransit.Data.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,374 @@
+/*
+  Design notes
+  - Reads like a timetable: tabular figures, left-aligned, quiet rules between rows.
+  - Route badges borrow from bus destination signs; they are the one bold element.
+  - Colour only encodes punctuality (good / fair / poor); jacaranda purple marks identity and focus.
+*/
+
+:root {
+  --paper: #f3f6f7;
+  --surface: #ffffff;
+  --ink: #102a30;
+  --muted: #4d6469;
+  --rule: #d5dee0;
+  --jacaranda: #5b3f8f;
+  --good: #2e7d4f;
+  --fair: #a86400;
+  --poor: #b42318;
+  --track: #e3e9eb;
+
+  --font-text: 'Atkinson Hyperlegible Next Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-sign: 'Barlow Semi Condensed', 'Arial Narrow', sans-serif;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0e1c20;
+    --surface: #132529;
+    --ink: #e4edef;
+    --muted: #9ab0b4;
+    --rule: #24393e;
+    --jacaranda: #b9a3e3;
+    --good: #5cc08a;
+    --fair: #e3a33b;
+    --poor: #f07a6e;
+    --track: #1f3439;
+    color-scheme: dark;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-text);
+  font-size: 1rem;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 0 1rem 3rem;
+}
+
+:focus-visible {
+  outline: 3px solid var(--jacaranda);
+  outline-offset: 2px;
+}
+
+/* Masthead */
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  padding: 1.25rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.brand-mark {
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 0.3rem;
+  background: var(--jacaranda);
+}
+
+.freshness {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.freshness::before {
+  content: '';
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-right: 0.45rem;
+  border-radius: 50%;
+  background: var(--good);
+  vertical-align: 0.05em;
+}
+
+.freshness-stale {
+  color: var(--poor);
+}
+
+.freshness-stale::before {
+  background: var(--poor);
+}
+
+.notice {
+  margin: 1rem 0 0;
+  padding: 0.6rem 0.9rem;
+  border-left: 4px solid var(--jacaranda);
+  background: var(--surface);
+}
+
+/* Summary */
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem 2rem;
+  padding: 2.5rem 0 2rem;
+}
+
+.headline {
+  max-width: 20ch;
+  margin: 0;
+  font-size: clamp(2rem, 1.3rem + 3vw, 3.4rem);
+  line-height: 1.08;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.headline-detail {
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+  font-size: 1.1rem;
+}
+
+.date-field {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+input,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+input[type='date'],
+input[type='search'] {
+  min-height: 2.75rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: 0.4rem;
+  background: var(--surface);
+}
+
+button {
+  min-height: 2.75rem;
+  padding: 0.4rem 1rem;
+  border: 1px solid var(--ink);
+  border-radius: 0.4rem;
+  background: transparent;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--surface);
+}
+
+/* Messages */
+.message {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.25rem 0;
+  border-top: 1px solid var(--rule);
+}
+
+.message p {
+  max-width: 65ch;
+  margin: 0;
+}
+
+/* Route board */
+.board-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  padding-bottom: 0.75rem;
+}
+
+.board-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.search input {
+  width: min(16rem, 100%);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.7rem 0.75rem 0.7rem 0;
+  text-align: left;
+  border-bottom: 1px solid var(--rule);
+}
+
+thead th {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 2px solid var(--ink);
+}
+
+tbody th {
+  font-weight: inherit;
+}
+
+.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.col-rate {
+  width: 45%;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.route-badge {
+  display: inline-block;
+  min-width: 3.25rem;
+  padding: 0.12rem 0.5rem;
+  border-radius: 0.25rem;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-sign);
+  font-weight: 600;
+  font-size: 1.15rem;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.rate {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.rate-track {
+  position: relative;
+  flex: 1;
+  height: 0.6rem;
+  border-radius: 0.3rem;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.rate-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: currentColor;
+}
+
+.rate-value {
+  min-width: 3ch;
+  font-weight: 700;
+  text-align: right;
+}
+
+.rate-good {
+  color: var(--good);
+}
+
+.rate-fair {
+  color: var(--fair);
+}
+
+.rate-poor {
+  color: var(--poor);
+}
+
+.board-empty {
+  color: var(--muted);
+}
+
+.show-all {
+  margin-top: 1.25rem;
+}
+
+.footer {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.footer p {
+  max-width: 70ch;
+  margin: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 40rem) {
+  th:nth-child(4),
+  td:nth-child(4) {
+    display: none;
+  }
+
+  th,
+  td {
+    padding-right: 0.5rem;
+  }
+
+  thead th {
+    white-space: normal;
+    vertical-align: bottom;
+  }
+
+  .col-rate {
+    width: auto;
+  }
+
+  .rate-track {
+    min-width: 3rem;
+  }
+
+  .route-badge {
+    min-width: 2.75rem;
+    font-size: 1rem;
+  }
+}

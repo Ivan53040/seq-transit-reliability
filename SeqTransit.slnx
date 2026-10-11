@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SeqTransit.Api/SeqTransit.Api.csproj" />
+    <Project Path="src/SeqTransit.Core/SeqTransit.Core.csproj" />
+    <Project Path="src/SeqTransit.Data/SeqTransit.Data.csproj" />
+    <Project Path="src/SeqTransit.Ingestion/SeqTransit.Ingestion.csproj" />
+    <Project Path="src/SeqTransit.Local/SeqTransit.Local.csproj" />
+    <Project Path="src/SeqTransit.Migrator/SeqTransit.Migrator.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SeqTransit.Core.Tests/SeqTransit.Core.Tests.csproj" />
+    <Project Path="tests/SeqTransit.Data.Tests/SeqTransit.Data.Tests.csproj" />
+  </Folder>
+</Solution>

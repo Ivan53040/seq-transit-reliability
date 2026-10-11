@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- PostgreSQL access: connection setup (including IAM sign-in), bulk writes, EF Core reads and migrations. -->
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="AWSSDK.RDS" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SeqTransit.Core\SeqTransit.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SeqTransit.Data.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Domain and application logic with no AWS or database dependencies:
+    GTFS-RT parsing, folding snapshots into observations, punctuality rules,
+    and the fetch/load workflows written against small interfaces (ports).
+  -->
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="Grpc.Tools" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- C# types are generated from the official GTFS-realtime definition at build time. -->
+    <Protobuf Include="..\..\proto\gtfs-realtime.proto" GrpcServices="None" Link="Gtfs\gtfs-realtime.proto" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SeqTransit.Core.Tests" />
+  </ItemGroup>
+
+</Project>

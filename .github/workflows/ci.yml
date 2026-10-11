@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dotnet:
+    name: .NET build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet restore SeqTransit.slnx
+      - run: dotnet build SeqTransit.slnx --no-restore -c Release
+      # Includes the PostgreSQL integration tests; GitHub's Ubuntu runners have Docker.
+      - run: dotnet test SeqTransit.slnx --no-build -c Release --logger "console;verbosity=normal"
+
+  infra:
+    name: CDK type-check and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  web:
+    name: Dashboard build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  # Runs only on main, after every check passes, and only once the repository variable
+  # AWS_DEPLOY_ROLE_ARN exists (see README, "Deploy from GitHub Actions").
+  deploy:
+    name: Deploy to AWS
+    needs: [dotnet, infra, web]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ap-southeast-2
+      SEQ_DB_HOST: ${{ vars.SEQ_DB_HOST }}
+      SEQ_DB_CLUSTER_RESOURCE_ID: ${{ vars.SEQ_DB_CLUSTER_RESOURCE_ID }}
+      SEQ_ALERT_EMAIL: ${{ vars.SEQ_ALERT_EMAIL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-southeast-2
+      - name: Build Lambda packages and dashboard
+        run: ./scripts/publish.sh
+      - name: Apply database migrations
+        run: dotnet run --project src/SeqTransit.Migrator -c Release
+        env:
+          DB_HOST: ${{ vars.SEQ_DB_HOST }}
+          DB_USER: postgres
+      - name: Deploy stack
+        working-directory: infra
+        run: |
+          npm ci
+          npx cdk deploy SeqTransitStack --require-approval never

@@ -1,0 +1,25 @@
+{
+  "name": "seq-transit-reliability-infra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AWS CDK app for SEQ Transit Reliability",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "deploy": "cdk deploy SeqTransitStack",
+    "destroy": "cdk destroy SeqTransitStack",
+    "deploy:github": "cdk --app \"npx tsx bin/github.ts\" deploy SeqTransitGitHubStack"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "aws-cdk": "2.1145.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.273.0",
+    "constructs": "10.8.1"
+  }
+}

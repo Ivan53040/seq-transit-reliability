@@ -1,0 +1,9 @@
+{
+  "dbHost": "seq-transit.cluster-xxxxxxxxxxxx.ap-southeast-2.rds.amazonaws.com",
+  "dbClusterResourceId": "cluster-XXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "alertEmail": "you@example.com",
+  "monthlyBudgetUsd": 10,
+  "loadIntervalMinutes": 30,
+  "rawSnapshotRetentionDays": 14,
+  "githubRepository": "your-github-user/seq-transit-reliability"
+}

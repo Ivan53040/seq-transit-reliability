@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Two Lambda functions in one assembly:
+      SeqTransit.Ingestion::SeqTransit.Ingestion.FetchFunction::HandleAsync  (every minute)
+      SeqTransit.Ingestion::SeqTransit.Ingestion.LoadFunction::HandleAsync   (every 30 minutes by default)
+  -->
+
+  <PropertyGroup>
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AWSProjectType>Lambda</AWSProjectType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Amazon.Lambda.Core" />
+    <PackageReference Include="Amazon.Lambda.Serialization.SystemTextJson" />
+    <PackageReference Include="AWSSDK.S3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SeqTransit.Core\SeqTransit.Core.csproj" />
+    <ProjectReference Include="..\SeqTransit.Data\SeqTransit.Data.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Runs the fetch and load steps on your own machine: snapshots go to a folder, data to local Postgres. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SeqTransit.Core\SeqTransit.Core.csproj" />
+    <ProjectReference Include="..\SeqTransit.Data\SeqTransit.Data.csproj" />
+  </ItemGroup>
+
+</Project>

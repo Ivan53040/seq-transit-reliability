@@ -1,0 +1,21 @@
+# Sample requests (Visual Studio / Rider / VS Code REST Client).
+@api = http://localhost:5080
+# Pick a real route id from the /api/routes/on-time response.
+@routeId = REPLACE_WITH_ROUTE_ID
+
+GET {{api}}/api/health
+
+###
+GET {{api}}/api/routes/on-time
+
+###
+GET {{api}}/api/routes/on-time?date=2026-10-12
+
+###
+GET {{api}}/api/routes/{{routeId}}/daily?days=7
+
+###
+GET {{api}}/api/cancellations
+
+###
+GET {{api}}/api/ingestion/snapshots?limit=5
