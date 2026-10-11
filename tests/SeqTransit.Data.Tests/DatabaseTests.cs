@@ -97,6 +97,30 @@ public sealed class DatabaseTests(PostgresFixture database) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_reinstated_trip_is_no_longer_counted_as_cancelled()
+    {
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(
+            new LoadBatch([], [new TripCancellation(Day, "t1", "66-1", T0, T0)], [new LoadedSnapshot(T0, "k1", 1, 0, 1)]),
+            CancellationToken.None);
+
+        // A later batch sees the trip running again, and an older sighting must not undo a newer cancellation.
+        var later = T0.AddMinutes(5);
+        await writer.SaveAsync(
+            new LoadBatch(
+                [],
+                [new TripCancellation(Day, "t2", "66-1", later, later)],
+                [new LoadedSnapshot(later, "k2", 2, 0, 1)],
+                [new TripRunning(Day, "t1", later), new TripRunning(Day, "t2", T0)]),
+            CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var counts = await new ReliabilityQueries(db).CancellationsByRouteAsync(Day, CancellationToken.None);
+
+        Assert.Equal(new[] { new RouteCancellations("66-1", 1) }, counts);
+    }
+
+    [Fact]
     public async Task PassedStops_excludes_absurd_delays_beyond_one_hour()
     {
         var writer = new ObservationWriter(database.DataSource);

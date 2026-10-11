@@ -31,6 +31,7 @@ public static class TripUpdateFeedParser
     {
         var observations = new List<StopObservation>();
         var cancellations = new List<TripCancellation>();
+        var running = new List<TripRunning>();
         var tripUpdates = 0;
         var stopUpdates = 0;
         var skippedStopUpdates = 0;
@@ -61,6 +62,7 @@ public static class TripUpdateFeedParser
                 continue;
             }
 
+            running.Add(new TripRunning(serviceDate, trip.TripId, feedTimestamp));
             var vehicleId = tripUpdate.Vehicle is { HasId: true } vehicle && vehicle.Id.Length > 0 ? vehicle.Id : null;
 
             foreach (var update in tripUpdate.StopTimeUpdate)
@@ -78,7 +80,7 @@ public static class TripUpdateFeedParser
             }
         }
 
-        return new FeedSnapshot(feedTimestamp, observations, cancellations, tripUpdates, stopUpdates, skippedStopUpdates);
+        return new FeedSnapshot(feedTimestamp, observations, cancellations, tripUpdates, stopUpdates, skippedStopUpdates, running);
     }
 
     private static StopObservation? ToObservation(

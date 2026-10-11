@@ -173,13 +173,26 @@ function Headline({ load, date, isToday }: { load: Load; date: string; isToday: 
 }
 
 function RouteBoard({ report, date }: { report: DayReport; date: string }) {
-  const [query, setQuery] = useState('');
-  const [mode, setMode] = useState<string>('all');
   const [showAll, setShowAll] = useState(false);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
   const modes = ['all', 'bus', 'train', 'ferry', 'tram'];
+
+  // Mode and search live in the URL (?mode=train&q=66), like the date, so a shared link or a
+  // reload shows the same filtered board. replace keeps typing out of the browser history.
+  const query = searchParams.get('q') ?? '';
+  const modeParam = searchParams.get('mode') ?? 'all';
+  const mode = modes.includes(modeParam) ? modeParam : 'all';
+
+  const updateParam = (key: string, value: string, empty: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (value === empty) next.delete(key);
+    else next.set(key, value);
+    setSearchParams(next, { replace: true });
+  };
+  const setQuery = (value: string) => updateParam('q', value, '');
+  const setMode = (value: string) => updateParam('mode', value, 'all');
 
   const cancelled = useMemo(
     () => new Map(report.cancellations.map((c) => [c.routeId, c.cancelledTrips])),
@@ -210,6 +223,7 @@ function RouteBoard({ report, date }: { report: DayReport; date: string }) {
   const getRouteLink = (routeId: string) => {
     const params = new URLSearchParams(searchParams);
     params.set('date', date);
+    // q and mode ride along so the route page's "Back to all routes" link restores the filtered board.
     return `/routes/${encodeURIComponent(routeId)}?${params.toString()}`;
   };
 
@@ -224,6 +238,7 @@ function RouteBoard({ report, date }: { report: DayReport; date: string }) {
                 key={m}
                 type="button"
                 className={`mode-btn ${mode === m ? 'active' : ''}`}
+                aria-pressed={mode === m}
                 onClick={() => setMode(m)}
               >
                 {m === 'all' ? 'All modes' : m.charAt(0).toUpperCase() + m.slice(1)}

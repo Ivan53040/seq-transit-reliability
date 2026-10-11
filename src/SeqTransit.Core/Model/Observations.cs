@@ -35,14 +35,20 @@ public sealed record TripCancellation(
     DateTimeOffset FirstSeenAt,
     DateTimeOffset LastFeedAt);
 
+/// <summary>A trip the feed reported as running (not cancelled) at <paramref name="SeenAt"/>.</summary>
+/// <remarks>Used to withdraw an earlier cancellation when Translink reinstates the trip.</remarks>
+public sealed record TripRunning(DateOnly ServiceDate, string TripId, DateTimeOffset SeenAt);
+
 /// <summary>Everything extracted from one GTFS-RT TripUpdates message.</summary>
+/// <param name="RunningTrips">Trips present and not cancelled in this snapshot.</param>
 public sealed record FeedSnapshot(
     DateTimeOffset FeedTimestamp,
     IReadOnlyList<StopObservation> Observations,
     IReadOnlyList<TripCancellation> Cancellations,
     int TripUpdateCount,
     int StopUpdateCount,
-    int SkippedStopUpdateCount);
+    int SkippedStopUpdateCount,
+    IReadOnlyList<TripRunning>? RunningTrips = null);
 
 /// <summary>Bookkeeping row written for every snapshot that was loaded.</summary>
 public sealed record LoadedSnapshot(

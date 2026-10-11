@@ -90,7 +90,7 @@ cheaper per GB-second than x86.
 ## 9. Data quality rules: drop absurd delays beyond 1 hour; do not filter untracked trips
 
 **Choice.**
-1. Observations where `|coalesce(arrival_delay_s, departure_delay_s)| > 3600` (over 1 hour early or late) are excluded from punctuality calculations in `PassedStops`.
+1. Observations where `|coalesce(arrival_delay_s, departure_delay_s)| > 3600` (over 1 hour early or late) are excluded from punctuality calculations. The rule lives in the `reliable_stop_observation` view (migration 0006), which every reliability query reads; change it with a new migration that replaces the view.
 2. Trips without a `vehicle_id` are retained, rather than dropped.
 
 **Why (discovered in real Translink SEQ data):**
@@ -126,3 +126,15 @@ Re-check these against a full weekday before relying on them.
 
 **Why.** Sorting worst-first puts tiny samples at the top, a 0% for "nothing observed" reads as a total failure,
 and closing up empty hours or days hides exactly the periods a reader should ask about.
+
+## 12. Reinstated trips withdraw their cancellation
+
+**Choice.** The parser records every trip it sees running. When a snapshot shows a trip running that is newer
+than its latest cancellation, the fold drops the cancellation from the batch and the writer deletes any stored
+cancellation older than that sighting (`seq_ingest` has DELETE on `trip_cancellation`, migration 0005).
+
+**Why.** Translink can cancel a trip and later reinstate it. Without this, the trip counted as cancelled for
+the whole day.
+
+**Known gap.** Like decision 3, this assumes snapshots are loaded roughly in order: a cancellation loaded in a
+later batch than a newer "running" sighting would be stored again. The watermark makes that rare.

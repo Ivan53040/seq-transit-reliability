@@ -51,6 +51,15 @@ public sealed class ObservationWriter(NpgsqlDataSource dataSource) : IObservatio
         WHERE EXCLUDED.last_feed_at > t.last_feed_at
         """;
 
+    // Runs after the cancellation upsert, so a cancellation newer than the "running" sighting survives.
+    internal const string WithdrawCancellationsSql = """
+        DELETE FROM trip_cancellation AS t
+        USING unnest(@service_date::date[], @trip_id::text[], @seen_at::timestamptz[]) AS r(service_date, trip_id, seen_at)
+        WHERE t.service_date = r.service_date
+          AND t.trip_id = r.trip_id
+          AND t.last_feed_at < r.seen_at
+        """;
+
     internal const string InsertSnapshotsSql = """
         INSERT INTO feed_snapshot (feed_timestamp, s3_key, trip_update_count, stop_update_count, cancelled_trip_count)
         SELECT * FROM unnest(
@@ -74,6 +83,7 @@ public sealed class ObservationWriter(NpgsqlDataSource dataSource) : IObservatio
 
         var observationRows = await UpsertObservationsAsync(connection, transaction, batch, cancellationToken);
         var cancellationRows = await UpsertCancellationsAsync(connection, transaction, batch, cancellationToken);
+        await WithdrawCancellationsAsync(connection, transaction, batch, cancellationToken);
         var snapshotRows = await InsertSnapshotsAsync(connection, transaction, batch, cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
@@ -120,6 +130,21 @@ public sealed class ObservationWriter(NpgsqlDataSource dataSource) : IObservatio
         command.Parameters.Add(new NpgsqlParameter<DateTime[]>("first_seen_at", rows.Select(r => r.FirstSeenAt.UtcDateTime).ToArray()));
         command.Parameters.Add(new NpgsqlParameter<DateTime[]>("last_feed_at", rows.Select(r => r.LastFeedAt.UtcDateTime).ToArray()));
         return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task WithdrawCancellationsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, LoadBatch batch, CancellationToken cancellationToken)
+    {
+        if (batch.Reinstated is not { Count: > 0 } rows)
+        {
+            return;
+        }
+
+        await using var command = new NpgsqlCommand(WithdrawCancellationsSql, connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter<DateOnly[]>("service_date", rows.Select(r => r.ServiceDate).ToArray()));
+        command.Parameters.Add(new NpgsqlParameter<string[]>("trip_id", rows.Select(r => r.TripId).ToArray()));
+        command.Parameters.Add(new NpgsqlParameter<DateTime[]>("seen_at", rows.Select(r => r.SeenAt.UtcDateTime).ToArray()));
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<int> InsertSnapshotsAsync(

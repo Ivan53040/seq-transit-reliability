@@ -103,9 +103,8 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             {
                 RouteId = g.Key,
                 Observed = g.Count(),
-                OnTime = g.Count(o => (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) >= early
-                                      && (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) <= late),
-                AverageDelay = g.Average(o => (double)(o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds ?? 0)),
+                OnTime = g.Count(o => o.DelaySeconds >= early && o.DelaySeconds <= late),
+                AverageDelay = g.Average(o => (double)o.DelaySeconds),
             })
             .ToListAsync(cancellationToken);
 
@@ -150,9 +149,8 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             {
                 ServiceDate = g.Key,
                 Observed = g.Count(),
-                OnTime = g.Count(o => (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) >= early
-                                      && (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) <= late),
-                AverageDelay = g.Average(o => (double)(o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds ?? 0)),
+                OnTime = g.Count(o => o.DelaySeconds >= early && o.DelaySeconds <= late),
+                AverageDelay = g.Average(o => (double)o.DelaySeconds),
             })
             .ToListAsync(cancellationToken);
 
@@ -175,9 +173,8 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             {
                 StopId = g.Key,
                 Observed = g.Count(),
-                OnTime = g.Count(o => (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) >= early
-                                      && (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) <= late),
-                AverageDelay = g.Average(o => (double)(o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds ?? 0)),
+                OnTime = g.Count(o => o.DelaySeconds >= early && o.DelaySeconds <= late),
+                AverageDelay = g.Average(o => (double)o.DelaySeconds),
             })
             .ToListAsync(cancellationToken);
 
@@ -235,15 +232,12 @@ public sealed class ReliabilityQueries(TransitDbContext db)
     public Task<DateTimeOffset?> LatestSnapshotAsync(CancellationToken cancellationToken) =>
         db.FeedSnapshots.MaxAsync(s => (DateTimeOffset?)s.FeedTimestamp, cancellationToken);
 
-    public const int MaxPlausibleDelaySeconds = 3600;
-
-    private IQueryable<StopDelayObservationRow> PassedStops(DateTimeOffset now) =>
-        db.StopDelayObservations
+    // The trusted-data rules (has a time and a delay, |delay| <= 1 hour) live in the
+    // reliable_stop_observation view (db/migrations/0006); only "already passed" is applied here.
+    private IQueryable<ReliableObservationRow> PassedStops(DateTimeOffset now) =>
+        db.ReliableObservations
             .AsNoTracking()
-            .Where(o => o.EventTime != null && o.EventTime < now)
-            .Where(o => o.ArrivalDelaySeconds != null || o.DepartureDelaySeconds != null)
-            .Where(o => (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) >= -MaxPlausibleDelaySeconds
-                     && (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) <= MaxPlausibleDelaySeconds);
+            .Where(o => o.EventTime < now);
 
     private static double Rate(int part, int total) => total == 0 ? 0 : Math.Round((double)part / total, 4);
 
@@ -256,19 +250,16 @@ public sealed class ReliabilityQueries(TransitDbContext db)
         var stat = await db.Database.SqlQuery<RouteSummaryStatsRow>($"""
             SELECT
                 count(*)::int AS "ObservedStops",
-                count(*) FILTER (WHERE coalesce(arrival_delay_s, departure_delay_s) >= {early}
-                                  AND coalesce(arrival_delay_s, departure_delay_s) <= {late})::int AS "OnTimeStops",
-                coalesce(avg(coalesce(arrival_delay_s, departure_delay_s)), 0)::float8 AS "AverageDelaySeconds",
-                coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(arrival_delay_s, departure_delay_s)), 0)::float8 AS "MedianDelaySeconds",
-                coalesce(percentile_cont(0.9) WITHIN GROUP (ORDER BY coalesce(arrival_delay_s, departure_delay_s)), 0)::float8 AS "P90DelaySeconds"
-            FROM stop_delay_observation
+                count(*) FILTER (WHERE delay_s >= {early}
+                                  AND delay_s <= {late})::int AS "OnTimeStops",
+                coalesce(avg(delay_s), 0)::float8 AS "AverageDelaySeconds",
+                coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY delay_s), 0)::float8 AS "MedianDelaySeconds",
+                coalesce(percentile_cont(0.9) WITHIN GROUP (ORDER BY delay_s), 0)::float8 AS "P90DelaySeconds"
+            FROM reliable_stop_observation
             WHERE route_id = {routeId}
               AND service_date >= {from}
               AND service_date <= {to}
               AND event_time < {now}
-              AND (arrival_delay_s IS NOT NULL OR departure_delay_s IS NOT NULL)
-              AND coalesce(arrival_delay_s, departure_delay_s) >= {-MaxPlausibleDelaySeconds}
-              AND coalesce(arrival_delay_s, departure_delay_s) <= {MaxPlausibleDelaySeconds}
             """).FirstOrDefaultAsync(cancellationToken);
 
         var staticRoute = await db.GtfsRoutes
@@ -315,16 +306,13 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             SELECT
                 extract(hour FROM event_time AT TIME ZONE 'Australia/Brisbane')::int AS "Hour",
                 count(*)::int AS "ObservedStops",
-                count(*) FILTER (WHERE coalesce(arrival_delay_s, departure_delay_s) >= {early}
-                                  AND coalesce(arrival_delay_s, departure_delay_s) <= {late})::int AS "OnTimeStops",
-                round(coalesce(avg(coalesce(arrival_delay_s, departure_delay_s)), 0)::numeric, 1)::float8 AS "AverageDelaySeconds"
-            FROM stop_delay_observation
+                count(*) FILTER (WHERE delay_s >= {early}
+                                  AND delay_s <= {late})::int AS "OnTimeStops",
+                round(coalesce(avg(delay_s), 0)::numeric, 1)::float8 AS "AverageDelaySeconds"
+            FROM reliable_stop_observation
             WHERE route_id = {routeId}
               AND service_date = {serviceDate}
               AND event_time < {now}
-              AND (arrival_delay_s IS NOT NULL OR departure_delay_s IS NOT NULL)
-              AND coalesce(arrival_delay_s, departure_delay_s) >= {-MaxPlausibleDelaySeconds}
-              AND coalesce(arrival_delay_s, departure_delay_s) <= {MaxPlausibleDelaySeconds}
             GROUP BY 1
             ORDER BY 1
             """).ToListAsync(cancellationToken);
@@ -352,16 +340,13 @@ public sealed class ReliabilityQueries(TransitDbContext db)
                 s.stop_lat AS "Latitude",
                 s.stop_lon AS "Longitude",
                 count(*)::int AS "ObservedStops",
-                count(*) FILTER (WHERE coalesce(o.arrival_delay_s, o.departure_delay_s) >= {early}
-                                  AND coalesce(o.arrival_delay_s, o.departure_delay_s) <= {late})::int AS "OnTimeStops",
-                round(avg(coalesce(o.arrival_delay_s, o.departure_delay_s))::numeric, 1)::float8 AS "AverageDelaySeconds"
-            FROM stop_delay_observation o
+                count(*) FILTER (WHERE o.delay_s >= {early}
+                                  AND o.delay_s <= {late})::int AS "OnTimeStops",
+                round(avg(o.delay_s)::numeric, 1)::float8 AS "AverageDelaySeconds"
+            FROM reliable_stop_observation o
             LEFT JOIN gtfs_stop s ON s.stop_id = o.stop_id
             WHERE o.service_date = {serviceDate}
               AND o.event_time < {now}
-              AND (o.arrival_delay_s IS NOT NULL OR o.departure_delay_s IS NOT NULL)
-              AND coalesce(o.arrival_delay_s, o.departure_delay_s) >= {-MaxPlausibleDelaySeconds}
-              AND coalesce(o.arrival_delay_s, o.departure_delay_s) <= {MaxPlausibleDelaySeconds}
             GROUP BY o.stop_id, s.stop_name, s.stop_lat, s.stop_lon
             HAVING count(*) >= {minObservations}
             ORDER BY "AverageDelaySeconds" DESC
@@ -391,16 +376,13 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             SELECT
                 coalesce(r.route_type, {UnknownRouteType})::int AS "RouteType",
                 count(*)::int AS "ObservedStops",
-                count(*) FILTER (WHERE coalesce(o.arrival_delay_s, o.departure_delay_s) >= {early}
-                                  AND coalesce(o.arrival_delay_s, o.departure_delay_s) <= {late})::int AS "OnTimeStops",
-                round(coalesce(avg(coalesce(o.arrival_delay_s, o.departure_delay_s)), 0)::numeric, 1)::float8 AS "AverageDelaySeconds"
-            FROM stop_delay_observation o
+                count(*) FILTER (WHERE o.delay_s >= {early}
+                                  AND o.delay_s <= {late})::int AS "OnTimeStops",
+                round(coalesce(avg(o.delay_s), 0)::numeric, 1)::float8 AS "AverageDelaySeconds"
+            FROM reliable_stop_observation o
             LEFT JOIN gtfs_route r ON r.route_id = o.route_id
             WHERE o.service_date = {serviceDate}
               AND o.event_time < {now}
-              AND (o.arrival_delay_s IS NOT NULL OR o.departure_delay_s IS NOT NULL)
-              AND coalesce(o.arrival_delay_s, o.departure_delay_s) >= {-MaxPlausibleDelaySeconds}
-              AND coalesce(o.arrival_delay_s, o.departure_delay_s) <= {MaxPlausibleDelaySeconds}
             GROUP BY 1
             ORDER BY 1
             """).ToListAsync(cancellationToken);

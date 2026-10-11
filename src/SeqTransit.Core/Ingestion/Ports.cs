@@ -23,10 +23,12 @@ public interface IObservationStore
     Task<SaveResult> SaveAsync(LoadBatch batch, CancellationToken cancellationToken);
 }
 
+/// <param name="Reinstated">Trips seen running; stored cancellations older than that are withdrawn.</param>
 public sealed record LoadBatch(
     IReadOnlyCollection<StopObservation> Observations,
     IReadOnlyCollection<TripCancellation> Cancellations,
-    IReadOnlyList<LoadedSnapshot> Snapshots);
+    IReadOnlyList<LoadedSnapshot> Snapshots,
+    IReadOnlyCollection<TripRunning>? Reinstated = null);
 
 /// <param name="ObservationRowsWritten">Rows inserted or updated. Older data never overwrites newer data.</param>
 public sealed record SaveResult(int ObservationRowsWritten, int CancellationRowsWritten, int SnapshotRowsWritten);

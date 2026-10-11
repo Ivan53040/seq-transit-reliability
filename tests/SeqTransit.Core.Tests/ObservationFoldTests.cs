@@ -59,6 +59,31 @@ public class ObservationFoldTests
         Assert.Equal(T0.AddMinutes(1), cancellation.LastFeedAt);
     }
 
+    [Fact]
+    public void A_trip_seen_running_after_its_cancellation_is_reinstated()
+    {
+        var fold = new ObservationFold();
+        var date = new DateOnly(2026, 10, 11);
+        fold.Add(new FeedSnapshot(T0, [], [new TripCancellation(date, "t1", "66-1", T0, T0)], 1, 0, 0));
+        fold.Add(new FeedSnapshot(T0.AddMinutes(1), [], [], 1, 0, 0, [new TripRunning(date, "t1", T0.AddMinutes(1))]));
+
+        Assert.Empty(fold.Cancellations);
+        var reinstated = Assert.Single(fold.Reinstated);
+        Assert.Equal(T0.AddMinutes(1), reinstated.SeenAt);
+    }
+
+    [Fact]
+    public void A_cancellation_newer_than_the_running_sighting_stands_whatever_the_order()
+    {
+        var fold = new ObservationFold();
+        var date = new DateOnly(2026, 10, 11);
+        fold.Add(new FeedSnapshot(T0.AddMinutes(1), [], [new TripCancellation(date, "t1", "66-1", T0.AddMinutes(1), T0.AddMinutes(1))], 1, 0, 0));
+        fold.Add(new FeedSnapshot(T0, [], [], 1, 0, 0, [new TripRunning(date, "t1", T0)]));
+
+        Assert.Single(fold.Cancellations);
+        Assert.Empty(fold.Reinstated);
+    }
+
     private static FeedSnapshot Snapshot(DateTimeOffset feedTime, int delay, int stopSequence = 1) =>
         new(
             feedTime,

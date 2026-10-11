@@ -14,12 +14,28 @@ public sealed class ObservationFold
 {
     private readonly Dictionary<ObservationKey, StopObservation> _observations = [];
     private readonly Dictionary<(DateOnly ServiceDate, string TripId), TripCancellation> _cancellations = [];
+    private readonly Dictionary<(DateOnly ServiceDate, string TripId), DateTimeOffset> _lastSeenRunning = [];
 
     public int SnapshotCount { get; private set; }
 
     public IReadOnlyCollection<StopObservation> Observations => _observations.Values;
 
-    public IReadOnlyCollection<TripCancellation> Cancellations => _cancellations.Values;
+    /// <summary>
+    /// Cancellations still in force: a trip seen running in a newer snapshot than its latest
+    /// cancellation has been reinstated and is left out.
+    /// </summary>
+    public IReadOnlyCollection<TripCancellation> Cancellations =>
+        _cancellations.Values.Where(c => !IsReinstated(c)).ToList();
+
+    /// <summary>
+    /// Trips seen running after any cancellation in this batch. The writer removes stored
+    /// cancellations older than these, so a cancellation loaded by an earlier batch is withdrawn too.
+    /// </summary>
+    public IReadOnlyCollection<TripRunning> Reinstated =>
+        _lastSeenRunning
+            .Where(r => !_cancellations.TryGetValue(r.Key, out var c) || c.LastFeedAt < r.Value)
+            .Select(r => new TripRunning(r.Key.ServiceDate, r.Key.TripId, r.Value))
+            .ToList();
 
     public void Add(FeedSnapshot snapshot)
     {
@@ -40,7 +56,20 @@ public sealed class ObservationFold
                 ? Merge(existing, cancellation)
                 : cancellation;
         }
+
+        foreach (var trip in snapshot.RunningTrips ?? [])
+        {
+            var key = (trip.ServiceDate, trip.TripId);
+            if (!_lastSeenRunning.TryGetValue(key, out var seen) || trip.SeenAt > seen)
+            {
+                _lastSeenRunning[key] = trip.SeenAt;
+            }
+        }
     }
+
+    private bool IsReinstated(TripCancellation cancellation) =>
+        _lastSeenRunning.TryGetValue((cancellation.ServiceDate, cancellation.TripId), out var seen)
+        && seen > cancellation.LastFeedAt;
 
     internal static StopObservation Merge(StopObservation existing, StopObservation incoming)
     {

@@ -90,7 +90,7 @@ public sealed class SnapshotLoader(
         }
 
         var saved = await observations.SaveAsync(
-            new LoadBatch(fold.Observations, fold.Cancellations, snapshots), cancellationToken);
+            new LoadBatch(fold.Observations, fold.Cancellations, snapshots, fold.Reinstated), cancellationToken);
 
         return new LoadResult(
             loaded.Count,

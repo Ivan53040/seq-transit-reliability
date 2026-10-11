@@ -18,6 +18,24 @@ public sealed class TransitDbContext(DbContextOptions<TransitDbContext> options)
     public DbSet<GtfsRouteRow> GtfsRoutes => Set<GtfsRouteRow>();
 
     public DbSet<GtfsStopRow> GtfsStops => Set<GtfsStopRow>();
+
+    /// <summary>Observations that pass the data-quality rules (view from migration 0006). Read-only.</summary>
+    public DbSet<ReliableObservationRow> ReliableObservations => Set<ReliableObservationRow>();
+}
+
+/// <summary>A row of the reliable_stop_observation view: one trusted delay per trip stop.</summary>
+[Table("reliable_stop_observation")]
+[Keyless]
+public sealed class ReliableObservationRow
+{
+    [Column("service_date")] public DateOnly ServiceDate { get; set; }
+    [Column("trip_id")] public string TripId { get; set; } = "";
+    [Column("stop_sequence")] public int StopSequence { get; set; }
+    [Column("route_id")] public string RouteId { get; set; } = "";
+    [Column("stop_id")] public string StopId { get; set; } = "";
+    [Column("vehicle_id")] public string? VehicleId { get; set; }
+    [Column("event_time")] public DateTimeOffset EventTime { get; set; }
+    [Column("delay_s")] public int DelaySeconds { get; set; }
 }
 
 [Table("gtfs_route")]

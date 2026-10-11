@@ -161,9 +161,11 @@
 
 * **關鍵過濾條件**：
   ```csharp
-  // PassedStops 過濾條件
-  .Where(o => o.EventTime != null && o.EventTime < now)
+  // PassedStops：資料品質規則在 view 裡，這裡只加「已經通過」
+  db.ReliableObservations.Where(o => o.EventTime < now)
   ```
+  * 「有時間、有延誤、|延誤| ≤ 1 小時」這些資料品質規則統一寫在 `reliable_stop_observation` view（`db/migrations/0006`），LINQ 和原生 SQL 查詢都查這個 view，改規則只要新增一個 `CREATE OR REPLACE VIEW` 的 migration。
+  * `event_time < now` 留在查詢裡，因為 `now` 是參數（測試會傳入固定時間）。
 * **核心原因**：
   * GTFS-RT 中的未來站點時間是「**預測值（Prediction）**」，隨路況隨時可能劇烈跳動（塞車、號誌、事故）。
   * 只有當站點的 `EventTime < now`（事件時間已經過去），該數值才沉澱為車輛通過該站的「**實際最終延誤（Observed Outcome）**」。
