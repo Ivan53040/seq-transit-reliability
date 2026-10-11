@@ -10,7 +10,7 @@ using SeqTransit.Data;
 // Settings (environment variables): SNAPSHOT_DIR (default .local-snapshots), FEED_URL,
 // DB_CONNECTION_STRING (default: the docker-compose database).
 
-const string DefaultConnection = "Host=localhost;Port=5432;Database=seq_transit;Username=postgres;Password=postgres";
+const string DefaultConnection = "Host=localhost;Port=5433;Database=seq_transit;Username=postgres;Password=postgres";
 const string TranslinkTripUpdates = "https://gtfsrt.api.translink.com.au/api/realtime/SEQ/TripUpdates";
 
 var command = args.FirstOrDefault() ?? "run";
