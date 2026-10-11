@@ -224,6 +224,74 @@
 
 ---
 
+## Phase 3：靜態 GTFS 課表整合與高效匯入 (Static GTFS Integration)
+
+### 1. 靜態 GTFS vs 實時 GTFS (GTFS-RT) 的職責邊界
+
+| 特性 | 靜態 GTFS (Static Timetable) | 實時 GTFS (GTFS-RT / TripUpdates) |
+| :--- | :--- | :--- |
+| **提供者格式** | 包含多個 CSV 文件的 ZIP 壓縮檔 (`SEQ_GTFS.zip`) | Google Protocol Buffers (二進制 Protobuf) |
+| **更新頻率** | 每週 ~ 每月（排班班表異動時更新一次） | 每 15 ~ 60 秒持續推送即時狀態 |
+| **包含資訊** | 路線名稱、車次課表、車站站名、經緯度、營運工具類型 | 即時延誤秒數、目前車輛 GPS、站點預估時間、取消狀態 |
+| **設計哲學** | **靜態描述「預期計劃」**：只有靜態表才能查到「路線代碼 `100-5146` 代表 `100 號公車 (Forest Lake - City)`」。 | **實時描述「動態現實」**：只攜帶 ID 與即時位移，不攜帶冗長名稱以節省蜂巢網路頻寬。 |
+
+---
+
+### 2. Npgsql Binary COPY (`BeginBinaryImportAsync`) 高性能匯入
+
+* **為什麼不用 ORM (EF Core `AddRange`) 或 SQL `INSERT`？**
+  * `SEQ_GTFS.zip` 內包含超過 **13.6 萬筆 Trips**、**1.3 萬個 Stops** 與 **1,200 多條 Routes**。
+  * 若使用一般的 SQL `INSERT`，即便每次批量傳入 1,000 筆，解析 SQL 文字與資料型別轉換依然耗費數十秒甚至幾分鐘。
+  * **Npgsql Binary COPY** 直接透過 PostgreSQL 原生的串流二進制協定（Streaming Binary Protocol）將 C# 物件寫入資料庫：
+    ```csharp
+    await using var writer = await connection.BeginBinaryImportAsync(
+        "COPY stage_route (...) FROM STDIN (FORMAT BINARY)", cancellationToken);
+    // 直接寫入二進制資料流，繞過任何 SQL 解析器
+    await writer.WriteAsync(route.RouteId, NpgsqlDbType.Text);
+    ```
+  * **成果**：在本地環境下，**15 萬筆靜態記錄在 5 秒內全數匯入完成**！
+
+---
+
+### 3. 單一交易原子換表（Atomic Table Swap）保證零讀取中斷
+
+* **常見新手陷阱**：在正式運行的資料庫上直接執行 `TRUNCATE` 或 `DELETE`，再逐批寫入新課表。這會導致在匯入的數秒至數分鐘內，前端或外部 API 查詢時看到「空表」或「只有一半的路線名」。
+* **架構解決方案（Staging + Transaction Atomic Swap）**：
+  1. 在交易內建立暫存表：`CREATE TEMP TABLE stage_route ... ON COMMIT DROP`。
+  2. 使用 Binary COPY 將完整的新課表先灌入 `stage_*` 暫存表。
+  3. 在**同一個資料庫交易**中執行：
+     ```sql
+     TRUNCATE gtfs_route, gtfs_stop, gtfs_trip;
+     INSERT INTO gtfs_route SELECT * FROM stage_route;
+     INSERT INTO gtfs_stop SELECT * FROM stage_stop;
+     INSERT INTO gtfs_trip SELECT * FROM stage_trip;
+     ```
+  4. 提交交易：`transaction.CommitAsync()`。
+* **為什麼這能保證零中斷？**
+  * 仰賴 PostgreSQL 的 **MVCC（多版本併發控制）**。
+  * 在交易提交之前，正在並發讀取 API 的連線讀取的完全是「舊版本的完整資料」。
+  * 交易提交瞬間，新資料一次性替換可見，**API 永遠不會看到半載入的資料狀態**。
+
+---
+
+### 4. LEFT JOIN 容錯設計與運具分類 (Route Types)
+
+* **容錯原則**：
+  * 當即時資料庫計算準點率時，我們使用 `LEFT JOIN` 關聯 `gtfs_route`：
+    ```csharp
+    var staticRoute = staticRoutes.GetValueOrDefault(g.RouteId);
+    var shortName = staticRoute?.RouteShortName ?? g.RouteId;
+    ```
+  * 如果 Translink 臨時開闢了不在靜態班表中的緊急臨時班次（如臨時加班接駁公車），系統**絕不崩潰**，會優雅地退回顯示其原始代碼。
+* **GTFS 國際標準運具代碼**：
+  * `0`: Tram / Light Rail（輕軌，如黃金海岸 G:link）
+  * `1`: Subway / Metro（地下鐵 / 地鐵）
+  * `2`: Rail（重鐵 / 火車，如昆士蘭鐵路 Queensland Rail）
+  * `3`: Bus（公車 / 巴士）
+  * `4`: Ferry（渡輪，如布里斯本 CityCat）
+
+---
+
 ## 面試直球對決 (Interview Defense Q&A)
 
 當面試官翻看你的程式碼時，最容易問的五個高難度問題：

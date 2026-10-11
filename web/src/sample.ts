@@ -16,6 +16,9 @@ export function sampleDay(): DayReport {
     const onTimeRate = Math.min(0.99, 0.55 + random() * 0.45);
     return {
       routeId: `S${100 + i * 7}`,
+      routeShortName: `${100 + i * 7}`,
+      routeLongName: `Sample Corridor ${100 + i * 7}`,
+      routeType: i % 4 === 0 ? 2 : i % 5 === 0 ? 0 : 3,
       observedStops,
       onTimeStops: Math.round(observedStops * onTimeRate),
       onTimeRate: Math.round(onTimeRate * 10000) / 10000,

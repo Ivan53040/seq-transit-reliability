@@ -14,6 +14,30 @@ public sealed class TransitDbContext(DbContextOptions<TransitDbContext> options)
     public DbSet<StopDelayObservationRow> StopDelayObservations => Set<StopDelayObservationRow>();
 
     public DbSet<TripCancellationRow> TripCancellations => Set<TripCancellationRow>();
+
+    public DbSet<GtfsRouteRow> GtfsRoutes => Set<GtfsRouteRow>();
+
+    public DbSet<GtfsStopRow> GtfsStops => Set<GtfsStopRow>();
+}
+
+[Table("gtfs_route")]
+[PrimaryKey(nameof(RouteId))]
+public sealed class GtfsRouteRow
+{
+    [Column("route_id")] public string RouteId { get; set; } = "";
+    [Column("route_short_name")] public string RouteShortName { get; set; } = "";
+    [Column("route_long_name")] public string RouteLongName { get; set; } = "";
+    [Column("route_type")] public int RouteType { get; set; }
+}
+
+[Table("gtfs_stop")]
+[PrimaryKey(nameof(StopId))]
+public sealed class GtfsStopRow
+{
+    [Column("stop_id")] public string StopId { get; set; } = "";
+    [Column("stop_name")] public string StopName { get; set; } = "";
+    [Column("stop_lat")] public double? Latitude { get; set; }
+    [Column("stop_lon")] public double? Longitude { get; set; }
 }
 
 [Table("feed_snapshot")]

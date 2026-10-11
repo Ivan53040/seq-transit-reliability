@@ -2,10 +2,24 @@
 
 export interface RouteOnTime {
   routeId: string;
+  routeShortName: string;
+  routeLongName: string;
+  routeType: number;
   observedStops: number;
   onTimeStops: number;
   onTimeRate: number;
   averageDelaySeconds: number;
+}
+
+export function formatMode(routeType: number): string {
+  switch (routeType) {
+    case 0: return 'Tram';
+    case 1: return 'Metro';
+    case 2: return 'Train';
+    case 3: return 'Bus';
+    case 4: return 'Ferry';
+    default: return 'Transit';
+  }
 }
 
 export interface RouteCancellations {

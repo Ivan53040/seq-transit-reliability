@@ -27,6 +27,12 @@ public static class ReliabilityEndpoints
             return TypedResults.Ok(new HealthResponse(status, latest, age is null ? null : Math.Round(age.Value.TotalSeconds)));
         });
 
+        // List all routes from static timetable for search and filter.
+        api.MapGet("/routes", async (
+            [FromServices] ReliabilityQueries queries,
+            CancellationToken cancellationToken) =>
+            TypedResults.Ok(await queries.AllRoutesAsync(cancellationToken)));
+
         // On-time performance per route for one service day (default: today in Brisbane), worst first.
         api.MapGet("/routes/on-time", async (
             DateOnly? date,

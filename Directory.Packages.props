@@ -4,9 +4,10 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <!-- GTFS-realtime protobuf -->
+    <!-- GTFS-realtime protobuf & CSV -->
     <PackageVersion Include="Google.Protobuf" Version="3.36.1" />
     <PackageVersion Include="Grpc.Tools" Version="2.84.0" />
+    <PackageVersion Include="CsvHelper" Version="33.1.0" />
     <!-- Database -->
     <PackageVersion Include="Npgsql" Version="10.0.3" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />

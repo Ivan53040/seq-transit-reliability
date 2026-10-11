@@ -29,3 +29,4 @@ Thumbs.db
 
 # Local pipeline snapshots
 .local-snapshots/
+.gtfs-cache/

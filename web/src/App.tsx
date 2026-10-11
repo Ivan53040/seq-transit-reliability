@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ApiError, brisbaneToday, loadDay, type DayReport, type RouteOnTime } from './api';
+import { ApiError, brisbaneToday, formatMode, loadDay, type DayReport, type RouteOnTime } from './api';
 import { sampleDay } from './sample';
 
 const ROWS_SHOWN_AT_FIRST = 25;
@@ -123,22 +123,56 @@ function Headline({ load, date, isToday }: { load: Load; date: string; isToday: 
 
 function RouteBoard({ report }: { report: DayReport }) {
   const [query, setQuery] = useState('');
+  const [mode, setMode] = useState<string>('all');
   const [showAll, setShowAll] = useState(false);
+
+  const modes = ['all', 'bus', 'train', 'ferry', 'tram'];
 
   const cancelled = useMemo(
     () => new Map(report.cancellations.map((c) => [c.routeId, c.cancelledTrips])),
     [report.cancellations],
   );
-  const matches = report.routes.filter((r) => r.routeId.toLowerCase().includes(query.trim().toLowerCase()));
-  const rows = showAll || query ? matches : matches.slice(0, ROWS_SHOWN_AT_FIRST);
+
+  const matches = report.routes.filter((r) => {
+    const modeName = formatMode(r.routeType).toLowerCase();
+    if (mode !== 'all' && modeName !== mode) return false;
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      r.routeId.toLowerCase().includes(q) ||
+      (r.routeShortName && r.routeShortName.toLowerCase().includes(q)) ||
+      (r.routeLongName && r.routeLongName.toLowerCase().includes(q))
+    );
+  });
+
+  const rows = showAll || query || mode !== 'all' ? matches : matches.slice(0, ROWS_SHOWN_AT_FIRST);
 
   return (
     <section className="board" aria-labelledby="board-title">
       <div className="board-head">
-        <h2 id="board-title">Routes, least punctual first</h2>
+        <div>
+          <h2 id="board-title">Routes, least punctual first</h2>
+          <div className="mode-filters" role="group" aria-label="Filter by transport mode" style={{ marginTop: '0.5rem' }}>
+            {modes.map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`mode-btn ${mode === m ? 'active' : ''}`}
+                onClick={() => setMode(m)}
+              >
+                {m === 'all' ? 'All modes' : m.charAt(0).toUpperCase() + m.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
         <label className="search">
           <span className="visually-hidden">Find a route</span>
-          <input type="search" placeholder="Find a route" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input
+            type="search"
+            placeholder="Find by number or name"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </label>
       </div>
 
@@ -159,9 +193,13 @@ function RouteBoard({ report }: { report: DayReport }) {
         </tbody>
       </table>
 
-      {rows.length === 0 && <p className="board-empty">No route matches “{query}”.</p>}
+      {rows.length === 0 && (
+        <p className="board-empty">
+          No route matches “{query}” {mode !== 'all' ? `in ${mode}` : ''}.
+        </p>
+      )}
 
-      {!showAll && !query && matches.length > rows.length && (
+      {!showAll && !query && mode === 'all' && matches.length > rows.length && (
         <button type="button" className="show-all" onClick={() => setShowAll(true)}>
           Show all {matches.length} routes
         </button>
@@ -175,7 +213,13 @@ function RouteRow({ route, cancelledTrips }: { route: RouteOnTime; cancelledTrip
   return (
     <tr>
       <th scope="row">
-        <span className="route-badge">{route.routeId}</span>
+        <div className="route-cell">
+          <div className="route-header-line">
+            <span className="route-badge">{route.routeShortName || route.routeId}</span>
+            <span className="route-mode">{formatMode(route.routeType)}</span>
+          </div>
+          {route.routeLongName && <span className="route-name" title={route.routeLongName}>{route.routeLongName}</span>}
+        </div>
       </th>
       <td className="col-rate">
         <div className={`rate rate-${band}`}>

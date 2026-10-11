@@ -1,3 +1,4 @@
+using SeqTransit.Core.Gtfs;
 using SeqTransit.Core.Ingestion;
 using SeqTransit.Data;
 
@@ -45,8 +46,12 @@ try
         case "run":
             await RunContinuously();
             break;
+        case "load-gtfs":
+            var zipPath = args.ElementAtOrDefault(1) ?? ".gtfs-cache/SEQ_GTFS.zip";
+            await LoadGtfs(zipPath);
+            break;
         default:
-            Console.Error.WriteLine($"Unknown command '{command}'. Use fetch, load or run.");
+            Console.Error.WriteLine($"Unknown command '{command}'. Use fetch, load, run or load-gtfs.");
             return 1;
     }
 }
@@ -99,3 +104,21 @@ async Task RunContinuously()
     }
     while (await timer.WaitForNextTickAsync(cancel.Token));
 }
+
+async Task LoadGtfs(string path)
+{
+    if (!File.Exists(path))
+    {
+        Console.Error.WriteLine($"File not found: {path}");
+        return;
+    }
+    Console.WriteLine($"Reading static GTFS archive from {path}...");
+    var package = StaticGtfsReader.ReadFile(path);
+    Console.WriteLine($"Parsed {package.Routes.Count} routes, {package.Stops.Count} stops, {package.Trips.Count} trips.");
+
+    Console.WriteLine("Loading into PostgreSQL with binary COPY...");
+    var gtfsLoader = new StaticGtfsLoader(dataSource);
+    var res = await gtfsLoader.LoadAsync(package, cancel.Token);
+    Console.WriteLine($"Done: Loaded {res.RoutesLoaded} routes, {res.StopsLoaded} stops, {res.TripsLoaded} trips.");
+}
+

@@ -144,6 +144,42 @@ public sealed class DatabaseTests(PostgresFixture database) : IAsyncLifetime
         Assert.Equal(0, s1.AverageDelaySeconds);
     }
 
+    [Fact]
+    public async Task StaticGtfsLoader_loading_twice_is_idempotent_and_joins_names()
+    {
+        var package = new StaticGtfsPackage(
+            [new GtfsRoute("66-1", "66", "RBWH - UQ Lakes", 3)],
+            [new GtfsStop("S1", "UQ Lakes station", -27.497, 153.013)],
+            [new GtfsTrip("trip-1", "66-1", "UQ Lakes", 0)]);
+
+        var loader = new StaticGtfsLoader(database.DataSource);
+        var first = await loader.LoadAsync(package, CancellationToken.None);
+        var second = await loader.LoadAsync(package, CancellationToken.None);
+
+        Assert.Equal(new StaticGtfsLoadResult(1, 1, 1), first);
+        Assert.Equal(new StaticGtfsLoadResult(1, 1, 1), second);
+
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(
+            Batch(T0, [
+                Observation(1, delay: 0, feedAt: T0, eventTime: T0.AddMinutes(-10)),
+            ]),
+            CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var routes = await new ReliabilityQueries(db).OnTimeByRouteAsync(Day, OnTimePolicy.Default, T0, CancellationToken.None);
+        var route = Assert.Single(routes);
+        Assert.Equal("66-1", route.RouteId);
+        Assert.Equal("66", route.RouteShortName);
+        Assert.Equal("RBWH - UQ Lakes", route.RouteLongName);
+        Assert.Equal(3, route.RouteType);
+
+        var stops = await new ReliabilityQueries(db).StopsByRouteAsync("66-1", Day, OnTimePolicy.Default, T0, CancellationToken.None);
+        var stop = Assert.Single(stops);
+        Assert.Equal("S1", stop.StopId);
+        Assert.Equal("UQ Lakes station", stop.StopName);
+    }
+
     private static StopObservation Observation(int sequence, int delay, DateTimeOffset feedAt, DateTimeOffset? eventTime = null) =>
         new(Day, "trip-1", sequence, "66-1", $"S{sequence}", "V1", delay, null, eventTime ?? feedAt, feedAt, feedAt);
 

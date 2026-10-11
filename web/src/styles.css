@@ -273,6 +273,62 @@ tbody th {
   white-space: nowrap;
 }
 
+.route-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.route-header-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.route-name {
+  font-size: 0.9rem;
+  color: var(--muted);
+  max-width: 32ch;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.route-mode {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.2rem;
+  width: fit-content;
+}
+
+.mode-filters {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.mode-btn {
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: transparent;
+  font-size: 0.82rem;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.mode-btn.active {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+  font-weight: 600;
+}
+
 .rate {
   display: flex;
   align-items: center;

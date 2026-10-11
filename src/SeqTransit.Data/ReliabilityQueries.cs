@@ -3,13 +3,33 @@ using SeqTransit.Core.Reliability;
 
 namespace SeqTransit.Data;
 
-public sealed record RouteOnTime(string RouteId, int ObservedStops, int OnTimeStops, double OnTimeRate, double AverageDelaySeconds);
+public sealed record RouteOnTime(
+    string RouteId,
+    string RouteShortName,
+    string RouteLongName,
+    int RouteType,
+    int ObservedStops,
+    int OnTimeStops,
+    double OnTimeRate,
+    double AverageDelaySeconds);
 
 public sealed record DailyOnTime(DateOnly ServiceDate, int ObservedStops, int OnTimeStops, double OnTimeRate, double AverageDelaySeconds);
 
 public sealed record RouteCancellations(string RouteId, int CancelledTrips);
 
-public sealed record RouteStopPerformance(string StopId, int ObservedStops, int OnTimeStops, double OnTimeRate, double AverageDelaySeconds);
+public sealed record RouteStopPerformance(
+    string StopId,
+    string StopName,
+    int ObservedStops,
+    int OnTimeStops,
+    double OnTimeRate,
+    double AverageDelaySeconds);
+
+public sealed record RouteSearchItem(
+    string RouteId,
+    string RouteShortName,
+    string RouteLongName,
+    int RouteType);
 
 public sealed record SnapshotSummary(
     DateTimeOffset FeedTimestamp,
@@ -46,8 +66,29 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             })
             .ToListAsync(cancellationToken);
 
+        var routeIds = groups.Select(g => g.RouteId).Distinct().ToList();
+        var staticRoutes = await db.GtfsRoutes
+            .AsNoTracking()
+            .Where(r => routeIds.Contains(r.RouteId))
+            .ToDictionaryAsync(r => r.RouteId, cancellationToken);
+
         return groups
-            .Select(g => new RouteOnTime(g.RouteId, g.Observed, g.OnTime, Rate(g.OnTime, g.Observed), Math.Round(g.AverageDelay, 1)))
+            .Select(g =>
+            {
+                var staticRoute = staticRoutes.GetValueOrDefault(g.RouteId);
+                var shortName = staticRoute?.RouteShortName ?? g.RouteId;
+                var longName = staticRoute?.RouteLongName ?? string.Empty;
+                var routeType = staticRoute?.RouteType ?? 3;
+                return new RouteOnTime(
+                    g.RouteId,
+                    shortName,
+                    longName,
+                    routeType,
+                    g.Observed,
+                    g.OnTime,
+                    Rate(g.OnTime, g.Observed),
+                    Math.Round(g.AverageDelay, 1));
+            })
             .OrderBy(r => r.OnTimeRate)
             .ThenByDescending(r => r.ObservedStops)
             .ToList();
@@ -97,12 +138,37 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             })
             .ToListAsync(cancellationToken);
 
+        var stopIds = groups.Select(g => g.StopId).Distinct().ToList();
+        var staticStops = await db.GtfsStops
+            .AsNoTracking()
+            .Where(s => stopIds.Contains(s.StopId))
+            .ToDictionaryAsync(s => s.StopId, cancellationToken);
+
         return groups
-            .Select(g => new RouteStopPerformance(g.StopId, g.Observed, g.OnTime, Rate(g.OnTime, g.Observed), Math.Round(g.AverageDelay, 1)))
+            .Select(g =>
+            {
+                var staticStop = staticStops.GetValueOrDefault(g.StopId);
+                var stopName = staticStop?.StopName ?? g.StopId;
+                return new RouteStopPerformance(
+                    g.StopId,
+                    stopName,
+                    g.Observed,
+                    g.OnTime,
+                    Rate(g.OnTime, g.Observed),
+                    Math.Round(g.AverageDelay, 1));
+            })
             .OrderBy(s => s.OnTimeRate)
             .ThenByDescending(s => s.AverageDelaySeconds)
             .ToList();
     }
+
+    public async Task<IReadOnlyList<RouteSearchItem>> AllRoutesAsync(CancellationToken cancellationToken) =>
+        await db.GtfsRoutes
+            .AsNoTracking()
+            .OrderBy(r => r.RouteShortName)
+            .ThenBy(r => r.RouteId)
+            .Select(r => new RouteSearchItem(r.RouteId, r.RouteShortName, r.RouteLongName, r.RouteType))
+            .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<RouteCancellations>> CancellationsByRouteAsync(
         DateOnly serviceDate, CancellationToken cancellationToken) =>
