@@ -86,3 +86,14 @@ runtime on arm64.
 
 **Why.** TypeScript is the CDK's most widely used language and the dashboard already uses it. arm64 Lambda is
 cheaper per GB-second than x86.
+
+## 9. Data quality rules: drop absurd delays beyond 1 hour; do not filter untracked trips
+
+**Choice.**
+1. Observations where `|coalesce(arrival_delay_s, departure_delay_s)| > 3600` (over 1 hour early or late) are excluded from punctuality calculations in `PassedStops`.
+2. Trips without a `vehicle_id` are retained, rather than dropped.
+
+**Why (discovered in real Translink SEQ data):**
+- **Train compatibility:** Queensland Rail suburban and interurban train routes (`CLSH`, `SPRP`, `CAIP`, `IPNA`, `BRBD`, etc., operator 5167) NEVER report a `vehicle_id` in Translink's GTFS-RT feed, but they DO report authentic, variable arrival and departure delays. Dropping trips without `vehicle_id` would eliminate 100% of train services across South East Queensland.
+- **Absurd delay rejection:** Isolated observations report astronomical delays (such as bus route 100 reporting 4,137s / 68-minute delay on ghost runs or stale tracking hardware). Excluding `|delay| > 3600s` prevents outliers from skewing average route delay figures.
+

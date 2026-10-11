@@ -96,6 +96,54 @@ public sealed class DatabaseTests(PostgresFixture database) : IAsyncLifetime
         Assert.Equal(new[] { new RouteCancellations("66-1", 2), new RouteCancellations("130-1", 1) }, counts);
     }
 
+    [Fact]
+    public async Task PassedStops_excludes_absurd_delays_beyond_one_hour()
+    {
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(
+            Batch(T0, [
+                Observation(1, delay: 0, feedAt: T0, eventTime: T0.AddMinutes(-10)),       // normal (on time)
+                Observation(2, delay: 4000, feedAt: T0, eventTime: T0.AddMinutes(-5)),    // absurd delay > 3600s
+                Observation(3, delay: -4000, feedAt: T0, eventTime: T0.AddMinutes(-5)),   // absurd early < -3600s
+            ]),
+            CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var routes = await new ReliabilityQueries(db).OnTimeByRouteAsync(Day, OnTimePolicy.Default, T0, CancellationToken.None);
+
+        var route = Assert.Single(routes);
+        Assert.Equal(1, route.ObservedStops);
+        Assert.Equal(1, route.OnTimeStops);
+        Assert.Equal(0, route.AverageDelaySeconds);
+    }
+
+    [Fact]
+    public async Task StopsByRouteAsync_returns_performance_per_stop()
+    {
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(
+            Batch(T0, [
+                Observation(1, delay: 0, feedAt: T0, eventTime: T0.AddMinutes(-10)),     // S1 on time
+                Observation(2, delay: 400, feedAt: T0, eventTime: T0.AddMinutes(-5)),    // S2 late
+            ]),
+            CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var stops = await new ReliabilityQueries(db).StopsByRouteAsync("66-1", Day, OnTimePolicy.Default, T0, CancellationToken.None);
+
+        Assert.Equal(2, stops.Count);
+        // Sorted worst on-time rate first
+        var s2 = stops[0];
+        Assert.Equal("S2", s2.StopId);
+        Assert.Equal(0.0, s2.OnTimeRate);
+        Assert.Equal(400, s2.AverageDelaySeconds);
+
+        var s1 = stops[1];
+        Assert.Equal("S1", s1.StopId);
+        Assert.Equal(1.0, s1.OnTimeRate);
+        Assert.Equal(0, s1.AverageDelaySeconds);
+    }
+
     private static StopObservation Observation(int sequence, int delay, DateTimeOffset feedAt, DateTimeOffset? eventTime = null) =>
         new(Day, "trip-1", sequence, "66-1", $"S{sequence}", "V1", delay, null, eventTime ?? feedAt, feedAt, feedAt);
 

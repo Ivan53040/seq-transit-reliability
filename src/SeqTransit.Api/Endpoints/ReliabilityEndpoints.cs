@@ -52,6 +52,17 @@ public static class ReliabilityEndpoints
                 routeId, from, to, policy, clock.GetUtcNow(), cancellationToken));
         });
 
+        // Stops on one route for a service day, worst on-time rate first.
+        api.MapGet("/routes/{routeId}/stops", async (
+            string routeId,
+            DateOnly? date,
+            [FromServices] ReliabilityQueries queries,
+            [FromServices] OnTimePolicy policy,
+            [FromServices] TimeProvider clock,
+            CancellationToken cancellationToken) =>
+            TypedResults.Ok(await queries.StopsByRouteAsync(
+                routeId, date ?? BrisbaneTime.Today(clock), policy, clock.GetUtcNow(), cancellationToken)));
+
         // Cancelled trips per route for one service day.
         api.MapGet("/cancellations", async (
             DateOnly? date,

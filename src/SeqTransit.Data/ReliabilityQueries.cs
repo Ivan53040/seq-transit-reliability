@@ -9,6 +9,8 @@ public sealed record DailyOnTime(DateOnly ServiceDate, int ObservedStops, int On
 
 public sealed record RouteCancellations(string RouteId, int CancelledTrips);
 
+public sealed record RouteStopPerformance(string StopId, int ObservedStops, int OnTimeStops, double OnTimeRate, double AverageDelaySeconds);
+
 public sealed record SnapshotSummary(
     DateTimeOffset FeedTimestamp,
     DateTimeOffset LoadedAt,
@@ -76,6 +78,32 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             .ToList();
     }
 
+    public async Task<IReadOnlyList<RouteStopPerformance>> StopsByRouteAsync(
+        string routeId, DateOnly serviceDate, OnTimePolicy policy, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var early = -policy.EarlyToleranceSeconds;
+        var late = policy.LateToleranceSeconds;
+
+        var groups = await PassedStops(now)
+            .Where(o => o.RouteId == routeId && o.ServiceDate == serviceDate)
+            .GroupBy(o => o.StopId)
+            .Select(g => new
+            {
+                StopId = g.Key,
+                Observed = g.Count(),
+                OnTime = g.Count(o => (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) >= early
+                                      && (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) <= late),
+                AverageDelay = g.Average(o => (double)(o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds ?? 0)),
+            })
+            .ToListAsync(cancellationToken);
+
+        return groups
+            .Select(g => new RouteStopPerformance(g.StopId, g.Observed, g.OnTime, Rate(g.OnTime, g.Observed), Math.Round(g.AverageDelay, 1)))
+            .OrderBy(s => s.OnTimeRate)
+            .ThenByDescending(s => s.AverageDelaySeconds)
+            .ToList();
+    }
+
     public async Task<IReadOnlyList<RouteCancellations>> CancellationsByRouteAsync(
         DateOnly serviceDate, CancellationToken cancellationToken) =>
         await db.TripCancellations
@@ -98,11 +126,15 @@ public sealed class ReliabilityQueries(TransitDbContext db)
     public Task<DateTimeOffset?> LatestSnapshotAsync(CancellationToken cancellationToken) =>
         db.FeedSnapshots.MaxAsync(s => (DateTimeOffset?)s.FeedTimestamp, cancellationToken);
 
+    public const int MaxPlausibleDelaySeconds = 3600;
+
     private IQueryable<StopDelayObservationRow> PassedStops(DateTimeOffset now) =>
         db.StopDelayObservations
             .AsNoTracking()
             .Where(o => o.EventTime != null && o.EventTime < now)
-            .Where(o => o.ArrivalDelaySeconds != null || o.DepartureDelaySeconds != null);
+            .Where(o => o.ArrivalDelaySeconds != null || o.DepartureDelaySeconds != null)
+            .Where(o => (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) >= -MaxPlausibleDelaySeconds
+                     && (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) <= MaxPlausibleDelaySeconds);
 
     private static double Rate(int part, int total) => total == 0 ? 0 : Math.Round((double)part / total, 4);
 }
