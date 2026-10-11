@@ -1,0 +1,201 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Npgsql;
+using SeqTransit.Core.Ingestion;
+using SeqTransit.Core.Model;
+using SeqTransit.Core.Reliability;
+using SeqTransit.Data;
+using SeqTransit.Data.Tests;
+
+namespace SeqTransit.Api.Tests;
+
+public sealed class SeqTransitApiFactory(PostgresFixture fixture) : WebApplicationFactory<Program>
+{
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        Environment.SetEnvironmentVariable("DB_CONNECTION_STRING", fixture.DataSource.ConnectionString);
+        builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<NpgsqlDataSource>();
+            services.RemoveAll<DbContextOptions<TransitDbContext>>();
+            services.RemoveAll<TransitDbContext>();
+
+            services.AddSingleton(fixture.DataSource);
+            services.AddDbContext<TransitDbContext>(options => options.UseNpgsql(fixture.DataSource));
+        });
+    }
+}
+
+[CollectionDefinition(Name)]
+public sealed class PostgresApiCollection : ICollectionFixture<PostgresFixture>
+{
+    public const string Name = "postgres-api";
+}
+
+[Collection(PostgresApiCollection.Name)]
+[Trait("Category", "Integration")]
+public sealed class ApiTests : IAsyncLifetime
+{
+    private static readonly DateOnly Day = DateOnly.FromDateTime(DateTime.UtcNow);
+    private static readonly DateTimeOffset T0 = DateTimeOffset.UtcNow;
+
+    private readonly PostgresFixture _fixture;
+    private readonly SeqTransitApiFactory _factory;
+    private readonly HttpClient _client;
+
+    public ApiTests(PostgresFixture fixture)
+    {
+        _fixture = fixture;
+        _factory = new SeqTransitApiFactory(fixture);
+        _client = _factory.CreateClient();
+    }
+
+    public async Task InitializeAsync()
+    {
+        await _fixture.ResetAsync();
+
+        // Seed static GTFS data
+        var package = new StaticGtfsPackage(
+            [
+                new GtfsRoute("66-1", "66", "RBWH - UQ Lakes", 3),
+                new GtfsRoute("QR-1", "BNIP", "Beenleigh - Ipswich", 2),
+            ],
+            [
+                new GtfsStop("STOP-1", "UQ Lakes Station", -27.497, 153.013),
+                new GtfsStop("STOP-2", "Roma Street Station", -27.465, 153.018),
+            ],
+            []);
+        await new StaticGtfsLoader(_fixture.DataSource).LoadAsync(package, CancellationToken.None);
+
+        // Seed real-time observations
+        var writer = new ObservationWriter(_fixture.DataSource);
+        var observations = new List<StopObservation>();
+        for (var i = 1; i <= 25; i++)
+        {
+            observations.Add(new StopObservation(
+                Day, "trip-1", i, "66-1", "STOP-1", "V1", 45, null, T0.AddMinutes(-i), T0, T0));
+        }
+
+        observations.Add(new StopObservation(
+            Day, "trip-2", 1, "QR-1", "STOP-2", null, 10, null, T0.AddMinutes(-5), T0, T0));
+
+        await writer.SaveAsync(
+            new LoadBatch(
+                observations,
+                [new TripCancellation(Day, "cancelled-1", "66-1", T0, T0)],
+                [new LoadedSnapshot(T0, SnapshotKeys.For(T0), 2, observations.Count, 1)]),
+            CancellationToken.None);
+    }
+
+    public async Task DisposeAsync()
+    {
+        _client.Dispose();
+        await _factory.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task OpenApi_endpoint_returns_valid_spec()
+    {
+        var response = await _client.GetAsync("/openapi/v1.json");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+        Assert.True(doc.RootElement.TryGetProperty("openapi", out var openApiVersion));
+        Assert.StartsWith("3.", openApiVersion.GetString());
+        Assert.True(doc.RootElement.TryGetProperty("paths", out var paths));
+        Assert.True(paths.TryGetProperty("/api/routes/{routeId}", out _));
+        Assert.True(paths.TryGetProperty("/api/modes/on-time", out _));
+    }
+
+    [Fact]
+    public async Task Health_endpoint_returns_ok_status()
+    {
+        var response = await _client.GetAsync("/api/health");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var doc = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("ok", doc.GetProperty("status").GetString());
+        Assert.True(doc.TryGetProperty("latestSnapshot", out _));
+    }
+
+    [Fact]
+    public async Task Route_summary_endpoint_returns_honest_statistics_and_percentiles()
+    {
+        var response = await _client.GetAsync("/api/routes/66-1?days=1");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var doc = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("66-1", doc.GetProperty("routeId").GetString());
+        Assert.Equal("66", doc.GetProperty("routeShortName").GetString());
+        Assert.Equal("RBWH - UQ Lakes", doc.GetProperty("routeLongName").GetString());
+        Assert.Equal(3, doc.GetProperty("routeType").GetInt32());
+        Assert.Equal(25, doc.GetProperty("observedStops").GetInt32());
+        Assert.Equal(25, doc.GetProperty("onTimeStops").GetInt32());
+        Assert.Equal(1.0, doc.GetProperty("onTimeRate").GetDouble());
+        Assert.Equal(45.0, doc.GetProperty("averageDelaySeconds").GetDouble());
+        Assert.Equal(45.0, doc.GetProperty("medianDelaySeconds").GetDouble());
+        Assert.Equal(1, doc.GetProperty("cancelledTrips").GetInt32());
+    }
+
+    [Fact]
+    public async Task Route_summary_returns_not_found_for_unknown_route()
+    {
+        var response = await _client.GetAsync("/api/routes/NON_EXISTENT_ROUTE?days=1");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Route_hourly_endpoint_returns_hourly_shape()
+    {
+        var response = await _client.GetAsync($"/api/routes/66-1/hours?date={Day:yyyy-MM-dd}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var doc = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(JsonValueKind.Array, doc.ValueKind);
+        Assert.True(doc.GetArrayLength() > 0);
+
+        var first = doc[0];
+        Assert.True(first.TryGetProperty("hour", out _));
+        Assert.True(first.TryGetProperty("observedStops", out _));
+        Assert.True(first.TryGetProperty("onTimeRate", out _));
+        Assert.True(first.TryGetProperty("averageDelaySeconds", out _));
+    }
+
+    [Fact]
+    public async Task Worst_stops_endpoint_returns_stops_meeting_min_observations()
+    {
+        var response = await _client.GetAsync($"/api/stops/worst?date={Day:yyyy-MM-dd}&limit=10&minObservations=20");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var doc = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(JsonValueKind.Array, doc.ValueKind);
+        var stop = Assert.Single(doc.EnumerateArray());
+
+        Assert.Equal("STOP-1", stop.GetProperty("stopId").GetString());
+        Assert.Equal("UQ Lakes Station", stop.GetProperty("stopName").GetString());
+        Assert.Equal(25, stop.GetProperty("observedStops").GetInt32());
+        Assert.Equal(45.0, stop.GetProperty("averageDelaySeconds").GetDouble());
+    }
+
+    [Fact]
+    public async Task Modes_on_time_endpoint_returns_modes_breakdown()
+    {
+        var response = await _client.GetAsync($"/api/modes/on-time?date={Day:yyyy-MM-dd}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var doc = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(JsonValueKind.Array, doc.ValueKind);
+        Assert.Equal(2, doc.GetArrayLength());
+
+        var modes = doc.EnumerateArray().ToList();
+        Assert.Contains(modes, m => m.GetProperty("modeName").GetString() == "Bus" && m.GetProperty("routeType").GetInt32() == 3);
+        Assert.Contains(modes, m => m.GetProperty("modeName").GetString() == "Train" && m.GetProperty("routeType").GetInt32() == 2);
+    }
+}

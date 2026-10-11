@@ -24,11 +24,13 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
 
 // In AWS, API Gateway (HTTP API) invokes this app through Lambda instead of Kestrel.
 builder.Services.AddAWSLambdaHosting(LambdaEventSource.HttpApi);
+builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseCors();
+app.MapOpenApi();
 app.MapReliabilityEndpoints();
 
 app.Run();

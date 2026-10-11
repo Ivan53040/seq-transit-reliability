@@ -8,6 +8,7 @@
     <Project Path="src/SeqTransit.Migrator/SeqTransit.Migrator.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/SeqTransit.Api.Tests/SeqTransit.Api.Tests.csproj" />
     <Project Path="tests/SeqTransit.Core.Tests/SeqTransit.Core.Tests.csproj" />
     <Project Path="tests/SeqTransit.Data.Tests/SeqTransit.Data.Tests.csproj" />
   </Folder>

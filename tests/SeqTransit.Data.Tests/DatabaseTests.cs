@@ -180,8 +180,176 @@ public sealed class DatabaseTests(PostgresFixture database) : IAsyncLifetime
         Assert.Equal("UQ Lakes station", stop.StopName);
     }
 
-    private static StopObservation Observation(int sequence, int delay, DateTimeOffset feedAt, DateTimeOffset? eventTime = null) =>
-        new(Day, "trip-1", sequence, "66-1", $"S{sequence}", "V1", delay, null, eventTime ?? feedAt, feedAt, feedAt);
+    [Fact]
+    public async Task RouteSummaryAsync_returns_percentiles_and_cancellations()
+    {
+        var package = new StaticGtfsPackage(
+            [new GtfsRoute("66-1", "66", "RBWH - UQ Lakes", 3)],
+            [],
+            []);
+        await new StaticGtfsLoader(database.DataSource).LoadAsync(package, CancellationToken.None);
+
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(
+            new LoadBatch(
+                [
+                    Observation(1, delay: 0, feedAt: T0, eventTime: T0.AddMinutes(-20)),
+                    Observation(2, delay: 100, feedAt: T0, eventTime: T0.AddMinutes(-15)),
+                    Observation(3, delay: 200, feedAt: T0, eventTime: T0.AddMinutes(-10)),
+                    Observation(4, delay: 400, feedAt: T0, eventTime: T0.AddMinutes(-5)), // late
+                ],
+                [
+                    new TripCancellation(Day, "trip-cancelled", "66-1", T0, T0),
+                ],
+                [new LoadedSnapshot(T0, SnapshotKeys.For(T0), 1, 4, 1)]),
+            CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var summary = await new ReliabilityQueries(db).RouteSummaryAsync("66-1", Day, Day, OnTimePolicy.Default, T0, CancellationToken.None);
+
+        Assert.NotNull(summary);
+        Assert.Equal("66-1", summary.RouteId);
+        Assert.Equal("66", summary.RouteShortName);
+        Assert.Equal(4, summary.ObservedStops);
+        Assert.Equal(3, summary.OnTimeStops);
+        Assert.Equal(0.75, summary.OnTimeRate);
+        Assert.Equal(175.0, summary.AverageDelaySeconds);
+        Assert.Equal(150.0, summary.MedianDelaySeconds);
+        Assert.True(summary.P90DelaySeconds >= 200);
+        Assert.Equal(1, summary.CancelledTrips);
+    }
+
+    [Fact]
+    public async Task RouteHourlyOnTimeAsync_groups_by_hour_in_brisbane_time()
+    {
+        // Brisbane is UTC+10.
+        // 08:30 Brisbane time on 2026-10-11 is 2026-10-10 22:30 UTC.
+        // 17:15 Brisbane time on 2026-10-11 is 2026-10-11 07:15 UTC.
+        var tBrisbaneMorningUtc = new DateTimeOffset(2026, 10, 10, 22, 30, 0, TimeSpan.Zero);
+        var tBrisbaneEveningUtc = new DateTimeOffset(2026, 10, 11, 7, 15, 0, TimeSpan.Zero);
+        var tQuery = new DateTimeOffset(2026, 10, 11, 10, 0, 0, TimeSpan.Zero);
+
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(
+            Batch(tQuery, [
+                Observation(1, delay: 30, feedAt: tQuery, eventTime: tBrisbaneMorningUtc),
+                Observation(2, delay: 350, feedAt: tQuery, eventTime: tBrisbaneMorningUtc.AddMinutes(5)),
+                Observation(3, delay: 10, feedAt: tQuery, eventTime: tBrisbaneEveningUtc),
+            ]),
+            CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var hourly = await new ReliabilityQueries(db).RouteHourlyOnTimeAsync("66-1", Day, OnTimePolicy.Default, tQuery, CancellationToken.None);
+
+        Assert.Equal(2, hourly.Count);
+        var h8 = Assert.Single(hourly, h => h.Hour == 8);
+        Assert.Equal(2, h8.ObservedStops);
+        Assert.Equal(1, h8.OnTimeStops);
+        Assert.Equal(0.5, h8.OnTimeRate);
+        Assert.Equal(190.0, h8.AverageDelaySeconds);
+
+        var h17 = Assert.Single(hourly, h => h.Hour == 17);
+        Assert.Equal(1, h17.ObservedStops);
+        Assert.Equal(1, h17.OnTimeStops);
+        Assert.Equal(1.0, h17.OnTimeRate);
+        Assert.Equal(10.0, h17.AverageDelaySeconds);
+    }
+
+    [Fact]
+    public async Task WorstStopsAsync_filters_by_sample_size_and_orders_by_delay()
+    {
+        var package = new StaticGtfsPackage(
+            [],
+            [
+                new GtfsStop("STOP-BAD", "Congested Junction", -27.4, 153.0),
+                new GtfsStop("STOP-GOOD", "Smooth Station", -27.5, 153.1),
+                new GtfsStop("STOP-FEW", "Rare Stop", -27.6, 153.2),
+            ],
+            []);
+        await new StaticGtfsLoader(database.DataSource).LoadAsync(package, CancellationToken.None);
+
+        var observations = new List<StopObservation>();
+        // STOP-BAD: 25 observations with 300s delay
+        for (var i = 1; i <= 25; i++)
+        {
+            observations.Add(Observation(i, delay: 300, feedAt: T0, eventTime: T0.AddMinutes(-i), stopId: "STOP-BAD"));
+        }
+        // STOP-GOOD: 25 observations with 10s delay
+        for (var i = 1; i <= 25; i++)
+        {
+            observations.Add(Observation(i + 50, delay: 10, feedAt: T0, eventTime: T0.AddMinutes(-i), stopId: "STOP-GOOD"));
+        }
+        // STOP-FEW: only 3 observations with 900s delay (should be filtered out by minObservations=20)
+        for (var i = 1; i <= 3; i++)
+        {
+            observations.Add(Observation(i + 100, delay: 900, feedAt: T0, eventTime: T0.AddMinutes(-i), stopId: "STOP-FEW"));
+        }
+
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(Batch(T0, observations), CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var worst = await new ReliabilityQueries(db).WorstStopsAsync(Day, OnTimePolicy.Default, T0, limit: 10, minObservations: 20, CancellationToken.None);
+
+        // STOP-FEW must be excluded because it has only 3 observations < 20 minObservations
+        Assert.Equal(2, worst.Count);
+        Assert.Equal("STOP-BAD", worst[0].StopId);
+        Assert.Equal("Congested Junction", worst[0].StopName);
+        Assert.Equal(300.0, worst[0].AverageDelaySeconds);
+        Assert.Equal(25, worst[0].ObservedStops);
+
+        Assert.Equal("STOP-GOOD", worst[1].StopId);
+        Assert.Equal("Smooth Station", worst[1].StopName);
+        Assert.Equal(10.0, worst[1].AverageDelaySeconds);
+        Assert.Equal(25, worst[1].ObservedStops);
+    }
+
+    [Fact]
+    public async Task ModesOnTimeAsync_groups_by_route_type()
+    {
+        var package = new StaticGtfsPackage(
+            [
+                new GtfsRoute("TRAIN-1", "BNIP", "Beenleigh - Ipswich", 2),
+                new GtfsRoute("BUS-1", "66", "RBWH - UQ", 3),
+            ],
+            [],
+            []);
+        await new StaticGtfsLoader(database.DataSource).LoadAsync(package, CancellationToken.None);
+
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(
+            Batch(T0, [
+                Observation(1, delay: 0, feedAt: T0, eventTime: T0.AddMinutes(-10), routeId: "TRAIN-1"),
+                Observation(2, delay: 400, feedAt: T0, eventTime: T0.AddMinutes(-5), routeId: "BUS-1"),
+            ]),
+            CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var modes = await new ReliabilityQueries(db).ModesOnTimeAsync(Day, OnTimePolicy.Default, T0, CancellationToken.None);
+
+        Assert.Equal(2, modes.Count);
+        var train = Assert.Single(modes, m => m.RouteType == 2);
+        Assert.Equal("Train", train.ModeName);
+        Assert.Equal(1, train.ObservedStops);
+        Assert.Equal(1, train.OnTimeStops);
+        Assert.Equal(1.0, train.OnTimeRate);
+
+        var bus = Assert.Single(modes, m => m.RouteType == 3);
+        Assert.Equal("Bus", bus.ModeName);
+        Assert.Equal(1, bus.ObservedStops);
+        Assert.Equal(0, bus.OnTimeStops);
+        Assert.Equal(0.0, bus.OnTimeRate);
+    }
+
+    private static StopObservation Observation(
+        int sequence,
+        int delay,
+        DateTimeOffset feedAt,
+        DateTimeOffset? eventTime = null,
+        string routeId = "66-1",
+        string? stopId = null,
+        DateOnly? serviceDate = null) =>
+        new(serviceDate ?? Day, "trip-1", sequence, routeId, stopId ?? $"S{sequence}", "V1", delay, null, eventTime ?? feedAt, feedAt, feedAt);
 
     private static LoadBatch Batch(DateTimeOffset feedAt, IReadOnlyCollection<StopObservation> observations) =>
         new(observations, [], [new LoadedSnapshot(feedAt, SnapshotKeys.For(feedAt), 1, observations.Count, 0)]);

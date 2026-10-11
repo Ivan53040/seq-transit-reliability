@@ -31,6 +31,46 @@ public sealed record RouteSearchItem(
     string RouteLongName,
     int RouteType);
 
+public sealed record RouteSummaryResponse(
+    string RouteId,
+    string RouteShortName,
+    string RouteLongName,
+    int RouteType,
+    DateOnly FromDate,
+    DateOnly ToDate,
+    int ObservedStops,
+    int OnTimeStops,
+    double OnTimeRate,
+    double AverageDelaySeconds,
+    double MedianDelaySeconds,
+    double P90DelaySeconds,
+    int CancelledTrips);
+
+public sealed record RouteHourPerformance(
+    int Hour,
+    int ObservedStops,
+    int OnTimeStops,
+    double OnTimeRate,
+    double AverageDelaySeconds);
+
+public sealed record WorstStopPerformance(
+    string StopId,
+    string StopName,
+    double? Latitude,
+    double? Longitude,
+    int ObservedStops,
+    int OnTimeStops,
+    double OnTimeRate,
+    double AverageDelaySeconds);
+
+public sealed record ModeReliability(
+    int RouteType,
+    string ModeName,
+    int ObservedStops,
+    int OnTimeStops,
+    double OnTimeRate,
+    double AverageDelaySeconds);
+
 public sealed record SnapshotSummary(
     DateTimeOffset FeedTimestamp,
     DateTimeOffset LoadedAt,
@@ -203,4 +243,216 @@ public sealed class ReliabilityQueries(TransitDbContext db)
                      && (o.ArrivalDelaySeconds ?? o.DepartureDelaySeconds) <= MaxPlausibleDelaySeconds);
 
     private static double Rate(int part, int total) => total == 0 ? 0 : Math.Round((double)part / total, 4);
+
+    public async Task<RouteSummaryResponse?> RouteSummaryAsync(
+        string routeId, DateOnly from, DateOnly to, OnTimePolicy policy, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var early = -policy.EarlyToleranceSeconds;
+        var late = policy.LateToleranceSeconds;
+
+        var stat = await db.Database.SqlQuery<RouteSummaryStatsRow>($"""
+            SELECT
+                count(*)::int AS "ObservedStops",
+                count(*) FILTER (WHERE coalesce(arrival_delay_s, departure_delay_s) >= {early}
+                                  AND coalesce(arrival_delay_s, departure_delay_s) <= {late})::int AS "OnTimeStops",
+                coalesce(avg(coalesce(arrival_delay_s, departure_delay_s)), 0)::float8 AS "AverageDelaySeconds",
+                coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(arrival_delay_s, departure_delay_s)), 0)::float8 AS "MedianDelaySeconds",
+                coalesce(percentile_cont(0.9) WITHIN GROUP (ORDER BY coalesce(arrival_delay_s, departure_delay_s)), 0)::float8 AS "P90DelaySeconds"
+            FROM stop_delay_observation
+            WHERE route_id = {routeId}
+              AND service_date >= {from}
+              AND service_date <= {to}
+              AND event_time < {now}
+              AND (arrival_delay_s IS NOT NULL OR departure_delay_s IS NOT NULL)
+              AND coalesce(arrival_delay_s, departure_delay_s) >= {-MaxPlausibleDelaySeconds}
+              AND coalesce(arrival_delay_s, departure_delay_s) <= {MaxPlausibleDelaySeconds}
+            """).FirstOrDefaultAsync(cancellationToken);
+
+        var staticRoute = await db.GtfsRoutes
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.RouteId == routeId, cancellationToken);
+
+        if (stat is null || (staticRoute is null && stat.ObservedStops == 0))
+        {
+            return null;
+        }
+
+        var cancelledTrips = await db.TripCancellations
+            .AsNoTracking()
+            .Where(c => c.RouteId == routeId && c.ServiceDate >= from && c.ServiceDate <= to)
+            .CountAsync(cancellationToken);
+
+        return new RouteSummaryResponse(
+            routeId,
+            staticRoute?.RouteShortName ?? routeId,
+            staticRoute?.RouteLongName ?? string.Empty,
+            staticRoute?.RouteType ?? 3,
+            from,
+            to,
+            stat.ObservedStops,
+            stat.OnTimeStops,
+            Rate(stat.OnTimeStops, stat.ObservedStops),
+            Math.Round(stat.AverageDelaySeconds, 1),
+            Math.Round(stat.MedianDelaySeconds, 1),
+            Math.Round(stat.P90DelaySeconds, 1),
+            cancelledTrips);
+    }
+
+    public async Task<IReadOnlyList<RouteHourPerformance>> RouteHourlyOnTimeAsync(
+        string routeId, DateOnly serviceDate, OnTimePolicy policy, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var early = -policy.EarlyToleranceSeconds;
+        var late = policy.LateToleranceSeconds;
+
+        var rows = await db.Database.SqlQuery<RouteHourStatsRow>($"""
+            SELECT
+                extract(hour FROM event_time AT TIME ZONE 'Australia/Brisbane')::int AS "Hour",
+                count(*)::int AS "ObservedStops",
+                count(*) FILTER (WHERE coalesce(arrival_delay_s, departure_delay_s) >= {early}
+                                  AND coalesce(arrival_delay_s, departure_delay_s) <= {late})::int AS "OnTimeStops",
+                round(coalesce(avg(coalesce(arrival_delay_s, departure_delay_s)), 0)::numeric, 1)::float8 AS "AverageDelaySeconds"
+            FROM stop_delay_observation
+            WHERE route_id = {routeId}
+              AND service_date = {serviceDate}
+              AND event_time < {now}
+              AND (arrival_delay_s IS NOT NULL OR departure_delay_s IS NOT NULL)
+              AND coalesce(arrival_delay_s, departure_delay_s) >= {-MaxPlausibleDelaySeconds}
+              AND coalesce(arrival_delay_s, departure_delay_s) <= {MaxPlausibleDelaySeconds}
+            GROUP BY 1
+            ORDER BY 1
+            """).ToListAsync(cancellationToken);
+
+        return rows
+            .Select(r => new RouteHourPerformance(
+                r.Hour,
+                r.ObservedStops,
+                r.OnTimeStops,
+                Rate(r.OnTimeStops, r.ObservedStops),
+                r.AverageDelaySeconds))
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<WorstStopPerformance>> WorstStopsAsync(
+        DateOnly serviceDate, OnTimePolicy policy, DateTimeOffset now, int limit, int minObservations, CancellationToken cancellationToken)
+    {
+        var early = -policy.EarlyToleranceSeconds;
+        var late = policy.LateToleranceSeconds;
+
+        var rows = await db.Database.SqlQuery<WorstStopStatsRow>($"""
+            SELECT
+                o.stop_id AS "StopId",
+                coalesce(s.stop_name, o.stop_id) AS "StopName",
+                s.stop_lat AS "Latitude",
+                s.stop_lon AS "Longitude",
+                count(*)::int AS "ObservedStops",
+                count(*) FILTER (WHERE coalesce(o.arrival_delay_s, o.departure_delay_s) >= {early}
+                                  AND coalesce(o.arrival_delay_s, o.departure_delay_s) <= {late})::int AS "OnTimeStops",
+                round(avg(coalesce(o.arrival_delay_s, o.departure_delay_s))::numeric, 1)::float8 AS "AverageDelaySeconds"
+            FROM stop_delay_observation o
+            LEFT JOIN gtfs_stop s ON s.stop_id = o.stop_id
+            WHERE o.service_date = {serviceDate}
+              AND o.event_time < {now}
+              AND (o.arrival_delay_s IS NOT NULL OR o.departure_delay_s IS NOT NULL)
+              AND coalesce(o.arrival_delay_s, o.departure_delay_s) >= {-MaxPlausibleDelaySeconds}
+              AND coalesce(o.arrival_delay_s, o.departure_delay_s) <= {MaxPlausibleDelaySeconds}
+            GROUP BY o.stop_id, s.stop_name, s.stop_lat, s.stop_lon
+            HAVING count(*) >= {minObservations}
+            ORDER BY "AverageDelaySeconds" DESC
+            LIMIT {limit}
+            """).ToListAsync(cancellationToken);
+
+        return rows
+            .Select(r => new WorstStopPerformance(
+                r.StopId,
+                r.StopName,
+                r.Latitude,
+                r.Longitude,
+                r.ObservedStops,
+                r.OnTimeStops,
+                Rate(r.OnTimeStops, r.ObservedStops),
+                r.AverageDelaySeconds))
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<ModeReliability>> ModesOnTimeAsync(
+        DateOnly serviceDate, OnTimePolicy policy, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var early = -policy.EarlyToleranceSeconds;
+        var late = policy.LateToleranceSeconds;
+
+        var rows = await db.Database.SqlQuery<ModeReliabilityStatsRow>($"""
+            SELECT
+                coalesce(r.route_type, 3)::int AS "RouteType",
+                count(*)::int AS "ObservedStops",
+                count(*) FILTER (WHERE coalesce(o.arrival_delay_s, o.departure_delay_s) >= {early}
+                                  AND coalesce(o.arrival_delay_s, o.departure_delay_s) <= {late})::int AS "OnTimeStops",
+                round(coalesce(avg(coalesce(o.arrival_delay_s, o.departure_delay_s)), 0)::numeric, 1)::float8 AS "AverageDelaySeconds"
+            FROM stop_delay_observation o
+            LEFT JOIN gtfs_route r ON r.route_id = o.route_id
+            WHERE o.service_date = {serviceDate}
+              AND o.event_time < {now}
+              AND (o.arrival_delay_s IS NOT NULL OR o.departure_delay_s IS NOT NULL)
+              AND coalesce(o.arrival_delay_s, o.departure_delay_s) >= {-MaxPlausibleDelaySeconds}
+              AND coalesce(o.arrival_delay_s, o.departure_delay_s) <= {MaxPlausibleDelaySeconds}
+            GROUP BY 1
+            ORDER BY 1
+            """).ToListAsync(cancellationToken);
+
+        return rows
+            .Select(r => new ModeReliability(
+                r.RouteType,
+                FormatModeName(r.RouteType),
+                r.ObservedStops,
+                r.OnTimeStops,
+                Rate(r.OnTimeStops, r.ObservedStops),
+                r.AverageDelaySeconds))
+            .OrderByDescending(m => m.OnTimeRate)
+            .ToList();
+    }
+
+    public static string FormatModeName(int routeType) => routeType switch
+    {
+        0 => "Tram",
+        1 => "Subway",
+        2 => "Train",
+        3 => "Bus",
+        4 => "Ferry",
+        _ => "Other"
+    };
+}
+
+internal sealed class RouteSummaryStatsRow
+{
+    public int ObservedStops { get; set; }
+    public int OnTimeStops { get; set; }
+    public double AverageDelaySeconds { get; set; }
+    public double MedianDelaySeconds { get; set; }
+    public double P90DelaySeconds { get; set; }
+}
+
+internal sealed class RouteHourStatsRow
+{
+    public int Hour { get; set; }
+    public int ObservedStops { get; set; }
+    public int OnTimeStops { get; set; }
+    public double AverageDelaySeconds { get; set; }
+}
+
+internal sealed class WorstStopStatsRow
+{
+    public string StopId { get; set; } = string.Empty;
+    public string StopName { get; set; } = string.Empty;
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
+    public int ObservedStops { get; set; }
+    public int OnTimeStops { get; set; }
+    public double AverageDelaySeconds { get; set; }
+}
+
+internal sealed class ModeReliabilityStatsRow
+{
+    public int RouteType { get; set; }
+    public int ObservedStops { get; set; }
+    public int OnTimeStops { get; set; }
+    public double AverageDelaySeconds { get; set; }
 }

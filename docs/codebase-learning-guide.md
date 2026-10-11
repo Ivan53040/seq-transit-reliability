@@ -292,6 +292,64 @@
 
 ---
 
+## Phase 4：高階分析端點與真實指標工程 (Advanced Analysis & Metrics Engineering)
+
+在 Phase 4 中，系統從「單純記錄延誤」升級為「能回答真實通勤者與交通主管機關決策問題」的分析引擎。我們新增了四組高階分析端點，並導入統計學上的真實指標原則與高效能 SQL 聚合。
+
+### 1. 為什麼不能只看平均值？引入百分位數 (Median & P90)
+* **平均值的盲點（The Flaw of Averages）**：
+  * 在大眾運輸領域，延誤時間呈現高度偏態分佈（Right-skewed Distribution）。大部分班次正常運轉（延誤 0~60 秒），但少數嚴重事故（例如電車出軌、號誌故障）可能產生長達 45 分鐘（2700 秒）的極端延誤。
+  * 若只看平均延誤（Average Delay），單一極端值會大幅拉高整條路線的數據，無法反映 90% 以上普通乘客的日常通勤感受。
+* **百分位數工程 (Percentile Metrics)**：
+  * **中位數 (P50 / Median Delay)**：代表 50% 乘客的日常典型延誤水準。
+  * **P90 延誤 (90th Percentile Delay)**：代表「在最糟糕的 10% 情況下，通勤者需要預留多少緩衝時間才不會遲到」。
+* **資料庫端高效運算（In-Database Aggregation via `percentile_cont`）**：
+  * **常見新手錯誤**：把一週幾萬筆資料全部撈回 C# 應用程式記憶體中，再用 LINQ 排序算百分位數（造成龐大網路頻寬消耗與記憶體 GC 壓力）。
+  * **架構最佳實踐**：利用 PostgreSQL 原生高階統計聚合函式 `percentile_cont(0.5) WITHIN GROUP (ORDER BY delay)`，在資料庫引擎層直接利用索引極速算出結果。在我們的測試中，一週的數據計算僅需 **0.06 毫秒**！
+
+---
+
+### 2. 尖峰時段分析與時區精準聚合 (Time Zone Aware Hourly Aggregations)
+* **問題背景**：
+  * GTFS-RT 即時資料庫中的 `event_time` 都是以 UTC 時間戳記儲存（例如 `2026-10-10 22:30:00+00`）。
+  * 若在資料庫直接執行 `extract(hour FROM event_time)`，提取出來的是格林威治時間（夜間 22 點），完全無法對齊昆士蘭當地民眾早晚通勤尖峰！
+* **昆士蘭時區特性**：
+  * 昆士蘭（布里斯本）全年不實施日光節約時間（AEST，固定為 UTC+10）。
+* **SQL 時區轉換處理**：
+  * 在 SQL 查詢中，使用 `extract(hour FROM event_time AT TIME ZONE 'Australia/Brisbane')::int`。
+  * 這樣能將 UTC 時間在資料庫端精準對齊為昆士蘭當地時間（07:00~09:00 上班尖峰、16:00~18:00 下班尖峰），使小時分析圖表真實呈現尖峰塞車趨勢。
+
+---
+
+### 3. 統計誠實原則：樣本數保護 (Sample Size Honesty)
+* **面試核心理念**：
+  * 「如果一條路線今天只被觀測到 2 個站點，其中 1 個準點，算出準點率 50%，這有意義嗎？沒有，這只是樣本不足的隨機噪聲。」
+* **架構落實**：
+  1. **所有比率必帶樣本數**：API 返回的每個統計物件（`RouteSummaryResponse`, `WorstStopPerformance`, `ModeReliability`）都同時返回 `ObservedStops` 與 `OnTimeStops`。
+  2. **樣本數下限保護門檻（`minObservations`）**：在最差站點分析（`GET /api/stops/worst`）中，透過 SQL 的 `HAVING count(*) >= minObservations`（預設門檻 20 筆）將低頻次站點過濾掉，防止樣本不足的站點因為單次異常而干擾真實排名。
+
+---
+
+### 4. EF Core 10 參數化原生 SQL (Parameterized SQL with FormattableString)
+* **為什麼使用 `Database.SqlQuery<T>`？**
+  * EF Core 的 LINQ 雖然直觀，但對於 PostgreSQL 的特定進階函式（如 `percentile_cont(...) WITHIN GROUP (...)` 或 `AT TIME ZONE`）沒有開箱即用的 LINQ 轉譯支援。
+  * EF Core 10 提供了 `Database.SqlQuery<T>($"...")`，能將查詢結果自動映射到強型別類別。
+* **安全防護（Anti-SQL Injection）**：
+  * C# 的字串插值（Interpolated String）在傳入 `SqlQuery` 時會被編譯為 `FormattableString`。
+  * EF Core 會自動將裡面的變數（例如 `{routeId}`, `{serviceDate}`）轉為參數化參數（`@p0`, `@p1`），**絕非字串串接**，百分之百防止 SQL Injection，同時允許 PostgreSQL 複用查詢計畫快取。
+
+---
+
+### 5. 雲端原生整合測試 (Integration Testing with WebApplicationFactory & Testcontainers)
+* **現代測試架構**：
+  * `SeqTransit.Api.Tests`：採用 `Microsoft.AspNetCore.Mvc.Testing` 中的 `WebApplicationFactory<Program>`，在記憶體中啟動真實的 ASP.NET Core Minimal API 伺服器與 HTTP 管道。
+  * 透過 Testcontainers 動態啟動真實 PostgreSQL 17 容器執行真實 SQL。
+  * 測試包含：
+    1. **OpenAPI 3.0 自動文件驗證**：驗證 `GET /openapi/v1.json` 是否正確產生，且包含新註冊的端點定義。
+    2. **狀態碼與 JSON Shape 斷言**：驗證 200 OK、404 NotFound，以及各欄位的精確型別與統計數值。
+
+---
+
 ## 面試直球對決 (Interview Defense Q&A)
 
 當面試官翻看你的程式碼時，最容易問的五個高難度問題：

@@ -69,6 +69,62 @@ public static class ReliabilityEndpoints
             TypedResults.Ok(await queries.StopsByRouteAsync(
                 routeId, date ?? BrisbaneTime.Today(clock), policy, clock.GetUtcNow(), cancellationToken)));
 
+        // Summary performance for one route over N days (default 7, max 31), including percentiles.
+        api.MapGet("/routes/{routeId}", async (
+            string routeId,
+            int? days,
+            [FromServices] ReliabilityQueries queries,
+            [FromServices] OnTimePolicy policy,
+            [FromServices] TimeProvider clock,
+            CancellationToken cancellationToken) =>
+        {
+            var to = BrisbaneTime.Today(clock);
+            var from = to.AddDays(-(Math.Clamp(days ?? 7, 1, 31) - 1));
+            var summary = await queries.RouteSummaryAsync(
+                routeId, from, to, policy, clock.GetUtcNow(), cancellationToken);
+            return summary is not null
+                ? Results.Ok(summary)
+                : Results.NotFound();
+        });
+
+        // Hourly on-time performance for one route for a service day, Brisbane time.
+        api.MapGet("/routes/{routeId}/hours", async (
+            string routeId,
+            DateOnly? date,
+            [FromServices] ReliabilityQueries queries,
+            [FromServices] OnTimePolicy policy,
+            [FromServices] TimeProvider clock,
+            CancellationToken cancellationToken) =>
+            TypedResults.Ok(await queries.RouteHourlyOnTimeAsync(
+                routeId, date ?? BrisbaneTime.Today(clock), policy, clock.GetUtcNow(), cancellationToken)));
+
+        // Stops with the highest average delay across South East Queensland, with sample size guard.
+        api.MapGet("/stops/worst", async (
+            DateOnly? date,
+            int? limit,
+            int? minObservations,
+            [FromServices] ReliabilityQueries queries,
+            [FromServices] OnTimePolicy policy,
+            [FromServices] TimeProvider clock,
+            CancellationToken cancellationToken) =>
+            TypedResults.Ok(await queries.WorstStopsAsync(
+                date ?? BrisbaneTime.Today(clock),
+                policy,
+                clock.GetUtcNow(),
+                Math.Clamp(limit ?? 20, 1, 100),
+                Math.Clamp(minObservations ?? 20, 1, 1000),
+                cancellationToken)));
+
+        // On-time performance aggregated by transport mode (Bus, Train, Ferry, Tram) for a service day.
+        api.MapGet("/modes/on-time", async (
+            DateOnly? date,
+            [FromServices] ReliabilityQueries queries,
+            [FromServices] OnTimePolicy policy,
+            [FromServices] TimeProvider clock,
+            CancellationToken cancellationToken) =>
+            TypedResults.Ok(await queries.ModesOnTimeAsync(
+                date ?? BrisbaneTime.Today(clock), policy, clock.GetUtcNow(), cancellationToken)));
+
         // Cancelled trips per route for one service day.
         api.MapGet("/cancellations", async (
             DateOnly? date,
