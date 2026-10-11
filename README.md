@@ -8,8 +8,7 @@ Built with C# / .NET 10, ASP.NET Core, EF Core, PostgreSQL, React + TypeScript, 
 (Lambda, EventBridge Scheduler, S3, Aurora Serverless, API Gateway, CloudFront), deployed with the AWS CDK
 and GitHub Actions.
 
-> **Status:** starter. The core logic, SQL and infrastructure are tested (see [Tests](#tests)); the first
-> run against the live feed and a real AWS account is the next step. Update this line as you go.
+> **Status:** Active development (Phases 0–5 complete). Live Translink GTFS-RT ingestion, static GTFS timetable loading, percentiles & hourly analytics API, and full interactive React dashboard with Route Detail view & SVG charts are tested and operational.
 
 ## How it works
 

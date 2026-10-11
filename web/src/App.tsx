@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ApiError, brisbaneToday, formatMode, loadDay, type DayReport, type RouteOnTime } from './api';
+import { Link, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  ApiError,
+  brisbaneToday,
+  formatMode,
+  loadDay,
+  type DayReport,
+  type RouteOnTime,
+} from './api';
+import { RoutePage } from './RoutePage';
 import { sampleDay } from './sample';
 
 const ROWS_SHOWN_AT_FIRST = 25;
-const useSample = import.meta.env.DEV && new URLSearchParams(window.location.search).has('sample');
 
 type Load =
   | { state: 'loading' }
@@ -11,8 +19,51 @@ type Load =
   | { state: 'ready'; report: DayReport };
 
 export function App() {
+  const [searchParams] = useSearchParams();
+  const useSample = searchParams.has('sample');
+
+  return (
+    <div className="page">
+      <header className="masthead">
+        <Link to={`/${searchParams.toString() ? `?${searchParams.toString()}` : ''}`} className="brand-link">
+          <p className="brand">
+            <span className="brand-mark" aria-hidden="true" />
+            SEQ Transit Reliability
+          </p>
+        </Link>
+        <span className="tagline">South East Queensland Transit Performance</span>
+      </header>
+
+      {useSample && (
+        <p className="notice" role="note">
+          Sample data mode. Remove <code>?sample</code> from the address to see real live data from Translink.
+        </p>
+      )}
+
+      <main>
+        <Routes>
+          <Route path="/" element={<BoardPage />} />
+          <Route path="/routes/:routeId" element={<RoutePage />} />
+        </Routes>
+      </main>
+
+      <footer className="footer">
+        <p>
+          On time means arriving between 1 minute early and 5 minutes late, counted only at stops the vehicle
+          has already passed. Sample sizes are always presented alongside punctuality rates. Source: Translink
+          real-time GTFS-RT feed and South East Queensland GTFS Timetable, licensed under CC BY 4.0.
+        </p>
+      </footer>
+    </div>
+  );
+}
+
+function BoardPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const today = brisbaneToday();
-  const [date, setDate] = useState(today);
+  const date = searchParams.get('date') || today;
+  const useSample = searchParams.has('sample');
+
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [attempt, setAttempt] = useState(0);
 
@@ -21,8 +72,10 @@ export function App() {
       setLoad({ state: 'ready', report: sampleDay() });
       return;
     }
+
     const controller = new AbortController();
     setLoad({ state: 'loading' });
+
     loadDay(date, controller.signal)
       .then((report) => setLoad({ state: 'ready', report }))
       .catch((error: unknown) => {
@@ -36,62 +89,57 @@ export function App() {
             : `Couldn't reach the API.${localHint}`;
         setLoad({ state: 'error', message });
       });
+
     return () => controller.abort();
-  }, [date, attempt]);
+  }, [date, useSample, attempt]);
+
+  const handleDateChange = (newDate: string) => {
+    if (!newDate) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('date', newDate);
+    setSearchParams(next);
+  };
 
   return (
-    <div className="page">
-      <header className="masthead">
-        <p className="brand">
-          <span className="brand-mark" aria-hidden="true" />
-          SEQ Transit Reliability
-        </p>
-        {load.state === 'ready' && <Freshness report={load.report} />}
-      </header>
-
-      {useSample && (
-        <p className="notice" role="note">
-          Sample data. Remove <code>?sample</code> from the address to see real numbers from the API.
-        </p>
-      )}
-
-      <main>
-        <section className="summary" aria-labelledby="headline">
-          <Headline load={load} date={date} isToday={date === today} />
+    <>
+      <section className="summary" aria-labelledby="headline">
+        <Headline load={load} date={date} isToday={date === today} />
+        <div className="summary-controls">
           <label className="date-field">
             <span>Service day</span>
-            <input type="date" value={date} max={today} onChange={(e) => e.target.value && setDate(e.target.value)} />
+            <input
+              type="date"
+              value={date}
+              max={today}
+              onChange={(e) => e.target.value && handleDateChange(e.target.value)}
+            />
           </label>
-        </section>
+          {load.state === 'ready' && <Freshness report={load.report} />}
+        </div>
+      </section>
 
-        {load.state === 'error' && (
-          <div className="message" role="alert">
-            <p>{load.message}</p>
-            <button type="button" onClick={() => setAttempt((n) => n + 1)}>
-              Try again
-            </button>
-          </div>
-        )}
+      {load.state === 'error' && (
+        <div className="message" role="alert">
+          <p>{load.message}</p>
+          <button type="button" onClick={() => setAttempt((n) => n + 1)}>
+            Try again
+          </button>
+        </div>
+      )}
 
-        {load.state === 'ready' && load.report.routes.length === 0 && (
-          <div className="message">
-            <p>
-              No stops have been recorded for this day yet. Data is loaded in batches, so new stops can take up to
-              half an hour to appear.
-            </p>
-          </div>
-        )}
+      {load.state === 'ready' && load.report.routes.length === 0 && (
+        <div className="message">
+          <p>
+            No stops have been recorded for this day yet. Data is loaded in batches, so new stops can take up to
+            half an hour to appear.
+          </p>
+        </div>
+      )}
 
-        {load.state === 'ready' && load.report.routes.length > 0 && <RouteBoard report={load.report} />}
-      </main>
-
-      <footer className="footer">
-        <p>
-          On time means arriving between 1 minute early and 5 minutes late, counted only at stops the vehicle has
-          already passed. Source: Translink real-time data (GTFS-RT), licensed under CC BY 4.0.
-        </p>
-      </footer>
-    </div>
+      {load.state === 'ready' && load.report.routes.length > 0 && (
+        <RouteBoard report={load.report} date={date} />
+      )}
+    </>
   );
 }
 
@@ -121,10 +169,12 @@ function Headline({ load, date, isToday }: { load: Load; date: string; isToday: 
   );
 }
 
-function RouteBoard({ report }: { report: DayReport }) {
+function RouteBoard({ report, date }: { report: DayReport; date: string }) {
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<string>('all');
   const [showAll, setShowAll] = useState(false);
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const modes = ['all', 'bus', 'train', 'ferry', 'tram'];
 
@@ -147,12 +197,18 @@ function RouteBoard({ report }: { report: DayReport }) {
 
   const rows = showAll || query || mode !== 'all' ? matches : matches.slice(0, ROWS_SHOWN_AT_FIRST);
 
+  const getRouteLink = (routeId: string) => {
+    const params = new URLSearchParams(searchParams);
+    params.set('date', date);
+    return `/routes/${encodeURIComponent(routeId)}?${params.toString()}`;
+  };
+
   return (
     <section className="board" aria-labelledby="board-title">
       <div className="board-head">
         <div>
           <h2 id="board-title">Routes, least punctual first</h2>
-          <div className="mode-filters" role="group" aria-label="Filter by transport mode" style={{ marginTop: '0.5rem' }}>
+          <div className="mode-filters" role="group" aria-label="Filter by transport mode">
             {modes.map((m) => (
               <button
                 key={m}
@@ -176,22 +232,41 @@ function RouteBoard({ report }: { report: DayReport }) {
         </label>
       </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">Route</th>
-            <th scope="col" className="col-rate">On time</th>
-            <th scope="col" className="num">Average delay</th>
-            <th scope="col" className="num">Stops</th>
-            <th scope="col" className="num">Cancelled trips</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((route) => (
-            <RouteRow key={route.routeId} route={route} cancelledTrips={cancelled.get(route.routeId) ?? 0} />
-          ))}
-        </tbody>
-      </table>
+      <div className="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Route</th>
+              <th scope="col" className="col-rate">
+                On time (Observed)
+              </th>
+              <th scope="col" className="num">
+                Average delay
+              </th>
+              <th scope="col" className="num">
+                Stops
+              </th>
+              <th scope="col" className="num">
+                Cancelled
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((route) => {
+              const link = getRouteLink(route.routeId);
+              return (
+                <RouteRow
+                  key={route.routeId}
+                  route={route}
+                  link={link}
+                  cancelledTrips={cancelled.get(route.routeId) ?? 0}
+                  onRowClick={() => navigate(link)}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
       {rows.length === 0 && (
         <p className="board-empty">
@@ -208,25 +283,57 @@ function RouteBoard({ report }: { report: DayReport }) {
   );
 }
 
-function RouteRow({ route, cancelledTrips }: { route: RouteOnTime; cancelledTrips: number }) {
+function RouteRow({
+  route,
+  link,
+  cancelledTrips,
+  onRowClick,
+}: {
+  route: RouteOnTime;
+  link: string;
+  cancelledTrips: number;
+  onRowClick: () => void;
+}) {
   const band = route.onTimeRate >= 0.9 ? 'good' : route.onTimeRate >= 0.75 ? 'fair' : 'poor';
+
   return (
-    <tr>
+    <tr
+      className="clickable-row"
+      tabIndex={0}
+      role="link"
+      aria-label={`View performance for Route ${route.routeShortName || route.routeId}, ${Math.round(route.onTimeRate * 100)}% on time`}
+      onClick={onRowClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onRowClick();
+        }
+      }}
+    >
       <th scope="row">
-        <div className="route-cell">
-          <div className="route-header-line">
-            <span className="route-badge">{route.routeShortName || route.routeId}</span>
-            <span className="route-mode">{formatMode(route.routeType)}</span>
+        <Link to={link} className="route-cell-link" tabIndex={-1}>
+          <div className="route-cell">
+            <div className="route-header-line">
+              <span className="route-badge">{route.routeShortName || route.routeId}</span>
+              <span className="route-mode">{formatMode(route.routeType)}</span>
+            </div>
+            {route.routeLongName && (
+              <span className="route-name" title={route.routeLongName}>
+                {route.routeLongName}
+              </span>
+            )}
           </div>
-          {route.routeLongName && <span className="route-name" title={route.routeLongName}>{route.routeLongName}</span>}
-        </div>
+        </Link>
       </th>
       <td className="col-rate">
         <div className={`rate rate-${band}`}>
           <span className="rate-track" aria-hidden="true">
             <span className="rate-fill" style={{ width: percent(route.onTimeRate) }} />
           </span>
-          <span className="rate-value">{percent(route.onTimeRate)}</span>
+          <div className="rate-figures">
+            <span className="rate-value">{percent(route.onTimeRate)}</span>
+            <span className="rate-sample-count">({route.observedStops.toLocaleString('en-AU')} stops)</span>
+          </div>
         </div>
       </td>
       <td className="num">{formatDelay(route.averageDelaySeconds)}</td>
@@ -253,11 +360,15 @@ const percent = (ratio: number) => `${Math.round(ratio * 100)}%`;
 
 function formatDelay(seconds: number): string {
   const minutes = seconds / 60;
-  if (Math.abs(minutes) < 0.1) return 'on schedule';
+  if (Math.abs(minutes) < 0.1) return 'on time';
   const sign = minutes > 0 ? '+' : '−';
   return `${sign}${Math.abs(minutes).toFixed(1)} min`;
 }
 
 function formatDay(isoDate: string): string {
-  return new Date(`${isoDate}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' });
+  return new Date(`${isoDate}T00:00:00`).toLocaleDateString('en-AU', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
 }

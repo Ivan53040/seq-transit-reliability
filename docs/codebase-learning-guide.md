@@ -350,6 +350,65 @@
 
 ---
 
+## Phase 5：前端儀表板與視覺化無障礙工程 (Frontend Dashboard, Route Analytics & Accessible Data Visualisation)
+
+在 Phase 5 中，我們將通勤者體驗提升到最高水準——任何人只要兩次點擊，就能一眼查出任何路線在尖峰時段的塞車瓶頸。
+
+### 1. 單頁應用程式路由與雲端部署對齊 (SPA Routing & CloudFront Error Responses)
+* **面試常問情境題**：
+  * 「為什麼在本地端用 Vite 瀏覽 `/routes/66-1` 很正常，但一布署到 S3 + CloudFront，使用者手動重新整理網頁時卻跳出 404 Not Found 或 403 Forbidden？」
+* **技術原理**：
+  * S3 是靜態物件儲存桶（Object Store），不是傳統的 Web Server（如 Nginx 或 Apache），它裡面根本沒有一個叫做 `/routes/66-1` 的真實物理檔案。
+  * 當使用者直接在網址列輸入深層連結（Deep Link）時，S3 找不到該物件，預設會回傳 404（或若無 List 權限時回傳 403）。
+* **AWS 雲端架構解法（CloudFront Custom Error Responses）**：
+  * 在 CDK 的 `seq-transit-stack.ts` 中，我們在 `SiteDistribution` 加上了自訂錯誤回應規則：
+    ```typescript
+    errorResponses: [
+      { httpStatus: 404, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: Duration.seconds(0) },
+      { httpStatus: 403, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: Duration.seconds(0) },
+    ]
+    ```
+  * 當邊緣節點遇到 404/403 時，會立刻以 HTTP 200 回傳 `/index.html`，交由瀏覽器端的 **React Router** 解讀路徑並渲染出正確的 `<RoutePage />`，完美解決單頁應用程式（SPA）在無伺服器靜態主機上的路由痛點。
+
+---
+
+### 2. 零依賴高對比原生 SVG 圖表架構 (Zero-Dependency Accessible SVG Charts)
+* **為什麼不用大型圖表套件（如 Recharts / Chart.js）？**
+  1. **輕量化與效能**：第三方圖表套件通常體積龐大（動輒 300KB+），且在 React 19 發布初期經常有 Peer Dependencies 版本相容性問題。自己撰寫 SVG 僅需不到 5KB，沒有任何外部依賴。
+  2. **設計系統完全契合**：圖表直接繼承 CSS 自訂屬性（`--jacaranda`, `--good`, `--fair`, `--poor`, `--surface`, `--ink`），不管是預設淺色或系統切換至暗黑模式（Dark Mode），顏色與對比度皆自動無縫適應。
+  3. **響應式 ViewBox**：透過 SVG `viewBox="0 0 640 220"` 向量縮放，無論在手機、平板還是 4K 螢幕上，線條與文字皆清晰不失真。
+
+---
+
+### 3. 真正具備同理心的無障礙圖表工程 (Screen Reader Accessibility)
+* **無障礙法規與原則（WCAG 2.1 AA）**：
+  * 視覺障礙通勤者使用螢幕閱讀器（Screen Readers，如 NVDA, JAWS, VoiceOver）時無法「看」折線圖或長條圖。
+* **雙層渲染設計（Dual-Layer Rendering）**：
+  1. **圖形層**：SVG 本身設定 `role="img"` 與直觀的 `aria-label`。
+  2. **語意層（文字替代方案）**：在 SVG 下方嵌入具有 `.visually-hidden` 樣式的語意化 HTML `<table>`，把過去 7 天的每日準點率與 24 小時各時段的延誤秒數轉化為表格文字。
+  * 視力正常的使用者看到美觀的曲線與長條圖；視障使用者透過語音朗讀能按鍵導航、清晰讀出每個點的確切數據。
+
+---
+
+### 4. 數據缺失時的優雅降級 (Handling Missing Data & Graceful Degradation)
+* **真實世界交通數據的挑戰**：
+  * 昆士蘭許多通勤快線（Express Routes）**只在週一至週五營運**，週末完全無班次。
+  * 如果使用者在週日打開這條路線，後端回傳的當日站點與小時數會是空的。
+* **前端彈性應對**：
+  * 系統不會崩潰，也不會顯示錯誤頁面。
+  * 過去 7 天的統計總覽卡片（KPI Cards）與 7 天折線圖依然能呈現歷史運行表現。
+  * 當日小時長條圖與站點列表則顯示溫和的提示訊息（例如「No observations recorded on this date」），並引導使用者切換服務日期。
+
+---
+
+### 5. URL 狀態同步原則 (Search Params as Single Source of Truth)
+* **分享即所得（Shareable URL State）**：
+  * 日期選擇器不只存在於 React 組件的本地 state，而是即時同步至 URL query 參數（`?date=2026-10-12`）。
+  * 點擊路線進入詳情頁面時，會將當前的查詢日期與展示狀態（`?sample`）傳遞至 `/routes/:routeId?date=...`。
+  * 使用者複製瀏覽器網址傳給主管、同事或面試官時，對方點開網址能 100% 重現一模一樣的視圖與篩選條件。
+
+---
+
 ## 面試直球對決 (Interview Defense Q&A)
 
 當面試官翻看你的程式碼時，最容易問的五個高難度問題：
