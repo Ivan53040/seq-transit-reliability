@@ -33,7 +33,7 @@ public static class TransitDataSource
             // A paused Aurora Serverless cluster needs a few seconds to resume on first connect.
             Timeout = 30,
             CommandTimeout = 60,
-            MaxPoolSize = 5,
+            MaxPoolSize = options.MaxPoolSize,
         }.ConnectionString;
 
         var builder = new NpgsqlDataSourceBuilder(connectionString);

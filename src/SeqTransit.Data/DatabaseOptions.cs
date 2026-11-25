@@ -22,9 +22,12 @@ public sealed class DatabaseOptions
     /// <summary>AWS region of the cluster, for example ap-southeast-2.</summary>
     public string? Region { get; set; }
 
+    /// <summary>Connections per process. The API Lambda sets 2: an instance serves one request at a time.</summary>
+    public int MaxPoolSize { get; set; } = 5;
+
     public bool UsesIamAuthentication => string.IsNullOrWhiteSpace(ConnectionString);
 
-    /// <summary>Reads DB_CONNECTION_STRING, or DB_HOST, DB_PORT, DB_NAME, DB_USER and AWS_REGION.</summary>
+    /// <summary>Reads DB_CONNECTION_STRING, or DB_HOST, DB_PORT, DB_NAME, DB_USER and AWS_REGION; plus DB_MAX_POOL_SIZE.</summary>
     public static DatabaseOptions FromEnvironment() => new()
     {
         ConnectionString = Environment.GetEnvironmentVariable("DB_CONNECTION_STRING"),
@@ -33,5 +36,6 @@ public sealed class DatabaseOptions
         Database = Environment.GetEnvironmentVariable("DB_NAME") ?? "postgres",
         Username = Environment.GetEnvironmentVariable("DB_USER"),
         Region = Environment.GetEnvironmentVariable("AWS_REGION"),
+        MaxPoolSize = int.TryParse(Environment.GetEnvironmentVariable("DB_MAX_POOL_SIZE"), out var pool) && pool > 0 ? pool : 5,
     };
 }

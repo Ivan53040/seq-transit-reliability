@@ -27,7 +27,7 @@ const config: AppConfig = {
   monthlyBudgetUsd: 10,
   loadIntervalMinutes: 30,
   rawSnapshotRetentionDays: 30,
-  apiMaxConcurrency: 5,
+  reserveConcurrency: false,
   githubRepository: 'someone/seq-transit-reliability',
   artifacts: fakeArtifacts(),
 };
@@ -133,12 +133,23 @@ test('page and API responses carry security headers', () => {
   assert.equal(distribution.match(/ResponseHeadersPolicyId/g)?.length, 2);
 });
 
-test('API concurrency is capped and loads never overlap', () => {
+test('no concurrency is reserved by default, so a new account quota of 10 still deploys', () => {
+  const functions = Object.values(template.findResources('AWS::Lambda::Function'));
+  for (const fn of functions) {
+    assert.equal(fn.Properties.ReservedConcurrentExecutions, undefined);
+  }
   template.hasResourceProperties('AWS::Lambda::Function', {
     Handler: 'SeqTransit.Api',
-    ReservedConcurrentExecutions: 5,
+    Environment: { Variables: Match.objectLike({ DB_MAX_POOL_SIZE: '2' }) },
   });
-  template.hasResourceProperties('AWS::Lambda::Function', {
+});
+
+test('reserveConcurrency caps the API at 5 and the load function at 1', () => {
+  const reserved = Template.fromStack(
+    new SeqTransitStack(new App(), 'Reserved', { env, config: { ...config, reserveConcurrency: true } }),
+  );
+  reserved.hasResourceProperties('AWS::Lambda::Function', { Handler: 'SeqTransit.Api', ReservedConcurrentExecutions: 5 });
+  reserved.hasResourceProperties('AWS::Lambda::Function', {
     Handler: 'SeqTransit.Ingestion::SeqTransit.Ingestion.LoadFunction::HandleAsync',
     ReservedConcurrentExecutions: 1,
   });

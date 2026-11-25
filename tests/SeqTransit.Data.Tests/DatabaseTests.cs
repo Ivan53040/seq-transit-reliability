@@ -497,4 +497,17 @@ public sealed class DatabaseTests(PostgresFixture database) : IAsyncLifetime
 
     private static LoadBatch Batch(DateTimeOffset feedAt, IReadOnlyCollection<StopObservation> observations) =>
         new(observations, [], [new LoadedSnapshot(feedAt, SnapshotKeys.For(feedAt), 1, observations.Count, 0)]);
+
+    [Fact]
+    public async Task Only_one_load_lock_can_be_held_at_a_time()
+    {
+        var first = await LoadLock.TryAcquireAsync(database.DataSource, CancellationToken.None);
+        Assert.NotNull(first);
+
+        Assert.Null(await LoadLock.TryAcquireAsync(database.DataSource, CancellationToken.None));
+
+        await first.DisposeAsync();
+        await using var again = await LoadLock.TryAcquireAsync(database.DataSource, CancellationToken.None);
+        Assert.NotNull(again);
+    }
 }

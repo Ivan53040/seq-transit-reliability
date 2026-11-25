@@ -88,6 +88,13 @@ public sealed class LoadFunction
 
     public async Task<LoadSummary> HandleAsync(Stream input, ILambdaContext context)
     {
+        await using var loadLock = await LoadLock.TryAcquireAsync(DataSource.Value, CancellationToken.None);
+        if (loadLock is null)
+        {
+            context.Logger.LogWarning("LOAD_SKIPPED another load is still running; this run does nothing");
+            return new LoadSummary(0, 0, 0, 0, 0, null, false);
+        }
+
         var batches = 0;
         var snapshots = 0;
         var unreadable = 0;

@@ -95,8 +95,9 @@ export class SeqTransitStack extends Stack {
       handler: 'SeqTransit.Ingestion::SeqTransit.Ingestion.LoadFunction::HandleAsync',
       memorySize: 1024,
       timeout: Duration.minutes(5),
-      // One load at a time: a retry can never overlap a run that is still writing.
-      reservedConcurrentExecutions: 1,
+      // One load at a time. Always enforced by an advisory lock in the function; reserving
+      // concurrency as well is optional (see AppConfig.reserveConcurrency).
+      reservedConcurrentExecutions: config.reserveConcurrency ? 1 : undefined,
       logGroup: this.logGroup('LoadLogs'),
       environment: {
         SNAPSHOT_BUCKET: snapshots.bucketName,
@@ -116,13 +117,15 @@ export class SeqTransitStack extends Stack {
       handler: 'SeqTransit.Api',
       memorySize: 1024,
       timeout: Duration.seconds(30),
-      // Each instance holds up to 5 Aurora connections; a cap keeps a cold-start burst bounded.
-      reservedConcurrentExecutions: config.apiMaxConcurrency > 0 ? config.apiMaxConcurrency : undefined,
+      // Optional cap on instances; each instance opens at most DB_MAX_POOL_SIZE connections.
+      reservedConcurrentExecutions: config.reserveConcurrency ? 5 : undefined,
       logGroup: this.logGroup('ApiLogs'),
       environment: {
         DB_HOST: config.dbHost,
         DB_NAME: 'postgres',
         DB_USER: API_DB_USER,
+        // A Lambda instance serves one request at a time, so two connections are plenty.
+        DB_MAX_POOL_SIZE: '2',
         // Two missed loads (plus feed lag) before /api/health reports stale data.
         Health__StaleAfterMinutes: String(config.loadIntervalMinutes * 2 + 15),
       },
@@ -279,7 +282,7 @@ function handler(event) {
           originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
         },
       },
-      // Do not cache gateway errors (a 503 while Aurora resumes, a 504 timeout): CloudFront
+      // Do not cache gateway errors (a 503 while Aurora resumes, a 429 from throttling): CloudFront
       // would otherwise hold them for 10 seconds and the dashboard's retries would get the same error.
       // No responsePagePath, so API errors are passed through unchanged, never rewritten into HTML.
       errorResponses: [500, 502, 503, 504].map((httpStatus) => ({ httpStatus, ttl: Duration.seconds(0) })),
