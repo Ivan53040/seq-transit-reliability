@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ApiError,
@@ -11,6 +11,15 @@ import {
 } from './api';
 import { DailyTrendChart } from './components/DailyTrendChart';
 import { HourlyPerformanceChart } from './components/HourlyPerformanceChart';
+import {
+  formatDay,
+  formatDelay,
+  formatOptionalDelay,
+  formatShortDate,
+  pageTitle,
+  percent,
+  rateBand,
+} from './format';
 import { sampleRouteDetail } from './sample';
 
 type Load =
@@ -63,6 +72,24 @@ export function RoutePage() {
     setSearchParams(next);
   };
 
+  // Name the tab after the route, and move focus to its heading once loaded so
+  // keyboard and screen reader users land on the new page rather than on <body>.
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
+  const readySummary = load.state === 'ready' ? load.report.summary : null;
+  useEffect(() => {
+    if (!readySummary) {
+      document.title = pageTitle(`Route ${routeId ?? ''}`);
+      return;
+    }
+    const code = readySummary.routeShortName || readySummary.routeId;
+    document.title = pageTitle(
+      readySummary.routeLongName ? `Route ${code} · ${readySummary.routeLongName}` : `Route ${code}`,
+    );
+  }, [readySummary, routeId]);
+  useEffect(() => {
+    if (load.state === 'ready') headingRef.current?.focus({ preventScroll: true });
+  }, [load.state, routeId]);
+
   const backQuery = new URLSearchParams(searchParams).toString();
   const backHref = `/${backQuery ? `?${backQuery}` : ''}`;
 
@@ -96,6 +123,7 @@ export function RoutePage() {
             date={date}
             today={today}
             onDateChange={handleDateChange}
+            headingRef={headingRef}
           />
 
           <RouteMetricsStrip summary={load.report.summary} />
@@ -110,7 +138,7 @@ export function RoutePage() {
             </div>
 
             <div className="chart-band">
-              <HourlyPerformanceChart data={load.report.hours} />
+              <HourlyPerformanceChart data={load.report.hours} dayLabel={formatDay(date)} />
             </div>
           </section>
 
@@ -141,11 +169,13 @@ function RouteHeader({
   date,
   today,
   onDateChange,
+  headingRef,
 }: {
   report: RouteDetailReport;
   date: string;
   today: string;
   onDateChange: (d: string) => void;
+  headingRef: RefObject<HTMLHeadingElement | null>;
 }) {
   const { summary } = report;
   const isToday = date === today;
@@ -162,7 +192,7 @@ function RouteHeader({
           <span className="meta-sep" aria-hidden="true">·</span>
           <code className="route-id-code">{summary.routeId}</code>
         </div>
-        <h1 className="route-title">
+        <h1 className="route-title" ref={headingRef} tabIndex={-1}>
           {summary.routeLongName || `Route ${summary.routeShortName || summary.routeId}`}
         </h1>
         <p className="route-subtitle">
@@ -187,7 +217,7 @@ function RouteHeader({
 
 function RouteMetricsStrip({ summary }: { summary: RouteDetailReport['summary'] }) {
   const rate = summary.onTimeRate;
-  const band = rate === null ? 'muted' : rate >= 0.9 ? 'good' : rate >= 0.75 ? 'fair' : 'poor';
+  const band = rate === null ? 'muted' : rateBand(rate);
   const period = `${formatShortDate(summary.fromDate)} – ${formatShortDate(summary.toDate)}`;
 
   return (
@@ -195,7 +225,7 @@ function RouteMetricsStrip({ summary }: { summary: RouteDetailReport['summary'] 
       <div className="metric-cell metric-primary">
         <span className="metric-label">7-day on-time rate</span>
         <div className={`metric-value rate-${band}`}>
-          {rate === null ? '—' : `${Math.round(rate * 100)}%`}
+          {rate === null ? '—' : percent(rate)}
         </div>
         <span className="metric-hint">
           {summary.observedStops.toLocaleString('en-AU')} stops · {period}
@@ -246,8 +276,7 @@ function StopsTable({ stops }: { stops: RouteStopPerformance[] }) {
           </thead>
           <tbody>
             {stops.map((stop) => {
-              const band =
-                stop.onTimeRate >= 0.9 ? 'good' : stop.onTimeRate >= 0.75 ? 'fair' : 'poor';
+              const band = rateBand(stop.onTimeRate);
               return (
                 <tr key={stop.stopId}>
                   <th scope="row">
@@ -259,10 +288,10 @@ function StopsTable({ stops }: { stops: RouteStopPerformance[] }) {
                       <span className="rate-track" aria-hidden="true">
                         <span
                           className="rate-fill"
-                          style={{ width: `${Math.round(stop.onTimeRate * 100)}%` }}
+                          style={{ width: percent(stop.onTimeRate) }}
                         />
                       </span>
-                      <span className="rate-value">{Math.round(stop.onTimeRate * 100)}%</span>
+                      <span className="rate-value">{percent(stop.onTimeRate)}</span>
                     </div>
                   </td>
                   <td className="num">{formatDelay(stop.averageDelaySeconds)}</td>
@@ -276,9 +305,8 @@ function StopsTable({ stops }: { stops: RouteStopPerformance[] }) {
 
       <div className="mobile-cards" aria-label="Corridor stops list">
         {stops.map((stop) => {
-          const band =
-            stop.onTimeRate >= 0.9 ? 'good' : stop.onTimeRate >= 0.75 ? 'fair' : 'poor';
-          const pct = `${Math.round(stop.onTimeRate * 100)}%`;
+          const band = rateBand(stop.onTimeRate);
+          const pct = percent(stop.onTimeRate);
           return (
             <article key={stop.stopId} className="mobile-card">
               <div className="mobile-card-top">
@@ -301,27 +329,4 @@ function StopsTable({ stops }: { stops: RouteStopPerformance[] }) {
       </div>
     </>
   );
-}
-
-function formatDelay(seconds: number): string {
-  const minutes = seconds / 60;
-  if (Math.abs(minutes) < 0.1) return 'on time';
-  const sign = minutes > 0 ? '+' : '−';
-  return `${sign}${Math.abs(minutes).toFixed(1)} min`;
-}
-
-function formatOptionalDelay(seconds: number | null): string {
-  return seconds === null ? '—' : formatDelay(seconds);
-}
-
-function formatShortDate(isoDate: string): string {
-  return new Date(`${isoDate}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
-}
-
-function formatDay(isoDate: string): string {
-  return new Date(`${isoDate}T00:00:00`).toLocaleDateString('en-AU', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
 }

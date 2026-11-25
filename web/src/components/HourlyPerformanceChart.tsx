@@ -1,12 +1,17 @@
 import { useState } from 'react';
 import type { RouteHourPerformance } from '../api';
+import { GOOD_RATE, formatDelay, formatHour, percent, rateBand } from '../format';
+import { useChartWidth } from './useChartWidth';
 
 interface HourlyPerformanceChartProps {
   data: RouteHourPerformance[];
+  /** The service day the hours belong to, e.g. "Wednesday 25 November". */
+  dayLabel: string;
 }
 
-export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
+export function HourlyPerformanceChart({ data, dayLabel }: HourlyPerformanceChartProps) {
   const [activeHour, setActiveHour] = useState<number | null>(null);
+  const [frameRef, measuredWidth] = useChartWidth<HTMLDivElement>(920);
 
   if (data.length === 0) {
     return (
@@ -16,17 +21,22 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
     );
   }
 
-  const width = 920;
-  const height = 240;
-  const padding = { top: 30, right: 20, bottom: 38, left: 44 };
+  const width = Math.max(280, measuredWidth);
+  const narrow = width < 560;
+  const height = narrow ? 210 : 240;
+  const padding = narrow
+    ? { top: 30, right: 8, bottom: 34, left: 38 }
+    : { top: 30, right: 20, bottom: 38, left: 44 };
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
   const baseline = padding.top + innerHeight;
 
   const sorted = [...data].sort((a, b) => a.hour - b.hour);
   const byHour = new Map(sorted.map((d) => [d.hour, d]));
-  const slotWidth = innerWidth / 24;
-  const barWidth = Math.max(14, Math.min(24, slotWidth * 0.66));
+  // Trips past midnight belong to the same service day as hours 24, 25 and so on; widen the axis for them.
+  const slotCount = Math.max(24, (sorted[sorted.length - 1]?.hour ?? 23) + 1);
+  const slotWidth = innerWidth / slotCount;
+  const barWidth = Math.min(24, slotWidth * 0.7);
 
   const worst = sorted.reduce((acc, cur) => (cur.onTimeRate < acc.onTimeRate ? cur : acc), sorted[0]);
   const selected = activeHour !== null ? byHour.get(activeHour) ?? null : null;
@@ -46,7 +56,7 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
     <div className="chart-wrapper" aria-labelledby="hourly-chart-heading">
       <div className="chart-header-row">
         <div>
-          <p className="section-kicker">By hour of day · Brisbane time (AEST)</p>
+          <p className="section-kicker">By hour · {dayLabel} · Brisbane time</p>
           <h2 id="hourly-chart-heading" className="chart-title">
             Hourly punctuality
           </h2>
@@ -55,16 +65,17 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
         <div className="chart-readout" aria-live="polite">
           <span className="readout-tag">{selected ? 'Selected hour' : 'Slowest hour'}</span>
           <strong>{formatHour(readout.hour)}</strong>
-          <span>{Math.round(readout.onTimeRate * 100)}% on time</span>
-          <span className="meta-sep" aria-hidden="true">·</span>
+          <span>{percent(readout.onTimeRate)} on time</span>
           <span>{formatDelay(readout.averageDelaySeconds)} avg</span>
-          <span className="meta-sep" aria-hidden="true">·</span>
           <span>{readout.observedStops.toLocaleString('en-AU')} stops</span>
         </div>
       </div>
 
+      <div ref={frameRef} className="chart-frame">
       <svg
         className="accessible-chart"
+        width={width}
+        height={height}
         viewBox={`0 0 ${width} ${height}`}
         role="img"
         aria-label="Bar chart showing on-time performance by hour of day in Brisbane time"
@@ -79,7 +90,7 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
           fill="var(--peak-band)"
         />
         <text x={amPeakX + slotWidth * 1.5} y={padding.top - 10} textAnchor="middle" className="chart-peak-tag">
-          AM PEAK
+          {narrow ? 'AM' : 'AM PEAK'}
         </text>
 
         <rect
@@ -90,13 +101,13 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
           fill="var(--peak-band)"
         />
         <text x={pmPeakX + slotWidth * 1.5} y={padding.top - 10} textAnchor="middle" className="chart-peak-tag">
-          PM PEAK
+          {narrow ? 'PM' : 'PM PEAK'}
         </text>
 
         {/* Horizontal grid lines */}
         {gridLevels.map((level) => {
           const y = getY(level);
-          const isTarget = level === 0.9;
+          const isTarget = level === GOOD_RATE;
           return (
             <g key={level}>
               <line
@@ -134,19 +145,14 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
           const barH = baseline - barY;
           const isActive = activeHour === d.hour;
 
-          const barColor =
-            d.onTimeRate >= 0.9 ? 'var(--good)' : d.onTimeRate >= 0.75 ? 'var(--fair)' : 'var(--poor)';
+          const barColor = `var(--${rateBand(d.onTimeRate)})`;
 
           return (
             <g
               key={d.hour}
               className="chart-bar-slot"
-              tabIndex={0}
-              role="button"
-              aria-label={`${formatHour(d.hour)}: ${Math.round(d.onTimeRate * 100)}% on time, ${formatDelay(d.averageDelaySeconds)} average delay, ${d.observedStops} stops`}
               onMouseEnter={() => setActiveHour(d.hour)}
-              onFocus={() => setActiveHour(d.hour)}
-              onBlur={() => setActiveHour(null)}
+              onClick={() => setActiveHour((prev) => (prev === d.hour ? null : d.hour))}
             >
               {/* Invisible full-height hit target for effortless hover */}
               <rect
@@ -168,7 +174,7 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
 
               {isActive && (
                 <text x={xCenter} y={barY - 8} textAnchor="middle" className="chart-val-label">
-                  {Math.round(d.onTimeRate * 100)}%
+                  {percent(d.onTimeRate)}
                 </text>
               )}
             </g>
@@ -176,7 +182,7 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
         })}
 
         {/* Clean sparse 3-hour ticks */}
-        {Array.from({ length: 8 }, (_, i) => i * 3).map((hour) => (
+        {(narrow ? [0, 6, 12, 18] : [0, 3, 6, 9, 12, 15, 18, 21]).map((hour) => (
           <text
             key={hour}
             x={padding.left + hour * slotWidth + slotWidth / 2}
@@ -188,11 +194,12 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
           </text>
         ))}
       </svg>
+      </div>
 
       {/* Screen reader table for full accessibility */}
       <div className="visually-hidden">
         <table>
-          <caption>Hourly on-time performance for this service day</caption>
+          <caption>Hourly on-time performance for {dayLabel}</caption>
           <thead>
             <tr>
               <th scope="col">Hour</th>
@@ -206,8 +213,8 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
             {sorted.map((d) => (
               <tr key={d.hour}>
                 <td>{formatHour(d.hour)}</td>
-                <td>{Math.round(d.onTimeRate * 100)}%</td>
-                <td>{d.averageDelaySeconds} seconds</td>
+                <td>{percent(d.onTimeRate)}</td>
+                <td>{formatDelay(d.averageDelaySeconds)}</td>
                 <td>{d.observedStops}</td>
                 <td>{(d.hour >= 7 && d.hour <= 9) || (d.hour >= 16 && d.hour <= 18) ? 'Peak' : 'Off-peak'}</td>
               </tr>
@@ -217,18 +224,4 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
       </div>
     </div>
   );
-}
-
-function formatHour(hour: number): string {
-  if (hour === 0) return '12 am';
-  if (hour < 12) return `${hour} am`;
-  if (hour === 12) return '12 pm';
-  return `${hour - 12} pm`;
-}
-
-function formatDelay(seconds: number): string {
-  const minutes = seconds / 60;
-  if (Math.abs(minutes) < 0.1) return 'on time';
-  const sign = minutes > 0 ? '+' : '−';
-  return `${sign}${Math.abs(minutes).toFixed(1)} min`;
 }

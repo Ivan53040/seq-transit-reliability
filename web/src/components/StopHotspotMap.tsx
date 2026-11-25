@@ -2,6 +2,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { WorstStopPerformance } from '../api';
+import { formatDelay, percent, rateBand } from '../format';
 
 interface StopHotspotMapProps {
   stops: WorstStopPerformance[];
@@ -183,12 +184,7 @@ export function StopHotspotMap({ stops, theme, query }: StopHotspotMapProps) {
     );
   }
 
-  const activeBand =
-    activeStop && activeStop.onTimeRate >= 0.9
-      ? 'good'
-      : activeStop && activeStop.onTimeRate >= 0.75
-        ? 'fair'
-        : 'poor';
+  const activeBand = activeStop ? rateBand(activeStop.onTimeRate) : 'poor';
 
   return (
     <div className="map-section">
@@ -244,7 +240,7 @@ export function StopHotspotMap({ stops, theme, query }: StopHotspotMapProps) {
           </div>
           <div className="map-inspector-stats">
             <span className={`map-inspector-rate rate-${activeBand}`}>
-              {Math.round(activeStop.onTimeRate * 100)}% on time
+              {percent(activeStop.onTimeRate)} on time
             </span>
             <span className="meta-sep" aria-hidden="true">·</span>
             <span>{formatDelay(activeStop.averageDelaySeconds)} avg</span>
@@ -257,17 +253,14 @@ export function StopHotspotMap({ stops, theme, query }: StopHotspotMapProps) {
   );
 }
 
-function markerColor(onTimeRate: number, theme: 'light' | 'dark'): string {
-  if (onTimeRate >= 0.9) return theme === 'dark' ? '#34c77b' : '#0f7b3e';
-  if (onTimeRate >= 0.75) return theme === 'dark' ? '#f0ad3e' : '#b26700';
-  return theme === 'dark' ? '#f25f5c' : '#c81d25';
-}
+// Leaflet paints markers outside React, so the CSS colour tokens are mirrored here.
+const MARKER_COLOURS = {
+  light: { good: '#0f7b3e', fair: '#9a5a00', poor: '#c81d25' },
+  dark: { good: '#34c77b', fair: '#f0ad3e', poor: '#f25f5c' },
+} as const;
 
-function formatDelay(seconds: number): string {
-  const minutes = seconds / 60;
-  if (Math.abs(minutes) < 0.1) return 'on time';
-  const sign = minutes > 0 ? '+' : '−';
-  return `${sign}${Math.abs(minutes).toFixed(1)} min`;
+function markerColor(onTimeRate: number, theme: 'light' | 'dark'): string {
+  return MARKER_COLOURS[theme][rateBand(onTimeRate)];
 }
 
 function escapeHtml(value: string): string {

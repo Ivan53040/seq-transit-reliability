@@ -18,6 +18,7 @@ import {
   type PunctualityBandKey,
 } from './components/PunctualityHistogram';
 import { StopHotspotMap } from './components/StopHotspotMap';
+import { formatDay, formatDelay, formatShortDate, pageTitle, percent, rateBand } from './format';
 import { RoutePage } from './RoutePage';
 import { sampleDay } from './sample';
 
@@ -92,13 +93,13 @@ export function App() {
         </div>
       </header>
 
-      {useSample && (
-        <p className="notice" role="note">
-          Sample data mode. Remove <code>?sample</code> from the address to view live Translink data.
-        </p>
-      )}
-
       <main>
+        {useSample && (
+          <p className="notice" role="note">
+            Sample data mode. Remove <code>?sample</code> from the address to view live Translink data.
+          </p>
+        )}
+
         <Routes>
           <Route path="/" element={<BoardPage theme={theme} />} />
           <Route path="/routes/:routeId" element={<RoutePage />} />
@@ -143,6 +144,10 @@ function BoardPage({ theme }: { theme: Theme }) {
 
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    document.title = pageTitle(date === today ? null : formatDay(date));
+  }, [date, today]);
 
   useEffect(() => {
     if (useSample) {
@@ -314,7 +319,7 @@ function ModeBars({
             Clear ({activeMode})
           </button>
         ) : (
-          <span className="pulse-hint">Tap mode to filter</span>
+          <span className="pulse-hint">Select a mode to filter</span>
         )}
       </div>
 
@@ -323,13 +328,7 @@ function ModeBars({
           const stat = byType.get(routeType);
           const hasData = stat !== undefined && stat.observedStops > 0;
           const isSelected = activeMode === key;
-          const band = !hasData
-            ? 'muted'
-            : stat.onTimeRate >= 0.9
-              ? 'good'
-              : stat.onTimeRate >= 0.75
-                ? 'fair'
-                : 'poor';
+          const band = hasData ? rateBand(stat.onTimeRate) : 'muted';
 
           return (
             <button
@@ -390,7 +389,7 @@ function WeeklyBrief({
         onClick={() => setMobileOpen((o) => !o)}
       >
         <span className="brief-mobile-toggle-left">
-          <span className="section-kicker">Weekly AI brief</span>
+          <span className="section-kicker">Weekly brief</span>
           <span className="brief-mobile-summary">
             {periodLabel} · <strong>{f.onTimePercent}%</strong> on time
           </span>
@@ -489,7 +488,7 @@ function Headline({ load, date, isToday }: { load: Load; date: string; isToday: 
   const observed = routes.reduce((sum, r) => sum + r.observedStops, 0);
   const onTime = routes.reduce((sum, r) => sum + r.onTimeStops, 0);
   const rate = onTime / observed;
-  const band = rate >= 0.9 ? 'good' : rate >= 0.75 ? 'fair' : 'poor';
+  const band = rateBand(rate);
   const when = isToday ? 'So far today' : formatDay(date);
 
   return (
@@ -705,7 +704,7 @@ function RouteBoard({
                 ['onTimeRate', 'On time'],
                 ['averageDelaySeconds', 'Delay'],
                 ['observedStops', 'Stops'],
-                ['cancellations', 'Cancel'],
+                ['cancellations', 'Cancelled'],
               ] as const
             ).map(([key, label]) => (
               <button
@@ -832,8 +831,7 @@ function WorstStopsBoard({ stops, query }: { stops: WorstStopPerformance[]; quer
               </thead>
               <tbody>
                 {stops.map((stop, index) => {
-                  const band =
-                    stop.onTimeRate >= 0.9 ? 'good' : stop.onTimeRate >= 0.75 ? 'fair' : 'poor';
+                  const band = rateBand(stop.onTimeRate);
                   return (
                     <tr key={stop.stopId}>
                       <th scope="row">
@@ -872,8 +870,7 @@ function WorstStopsBoard({ stops, query }: { stops: WorstStopPerformance[]; quer
 
           <div className="mobile-cards" aria-label="Worst stops list">
             {stops.map((stop, index) => {
-              const band =
-                stop.onTimeRate >= 0.9 ? 'good' : stop.onTimeRate >= 0.75 ? 'fair' : 'poor';
+              const band = rateBand(stop.onTimeRate);
               return (
                 <article key={stop.stopId} className="mobile-card">
                   <div className="mobile-card-top">
@@ -915,7 +912,7 @@ function RouteRow({
   onRowClick: () => void;
 }) {
   const lowSample = route.observedStops < MIN_RELIABLE_SAMPLE;
-  const band = lowSample ? 'muted' : route.onTimeRate >= 0.9 ? 'good' : route.onTimeRate >= 0.75 ? 'fair' : 'poor';
+  const band = lowSample ? 'muted' : rateBand(route.onTimeRate);
   const slug = modeSlug(route.routeType);
 
   return (
@@ -967,7 +964,7 @@ function RouteMobileCard({
   cancelledTrips: number;
 }) {
   const lowSample = route.observedStops < MIN_RELIABLE_SAMPLE;
-  const band = lowSample ? 'muted' : route.onTimeRate >= 0.9 ? 'good' : route.onTimeRate >= 0.75 ? 'fair' : 'poor';
+  const band = lowSample ? 'muted' : rateBand(route.onTimeRate);
   const slug = modeSlug(route.routeType);
 
   return (
@@ -1016,25 +1013,4 @@ function Freshness({ report }: { report: DayReport }) {
   ) : (
     <p className="freshness freshness-stale">Data is {minutes} min old; loading may have stopped</p>
   );
-}
-
-const percent = (ratio: number) => `${Math.round(ratio * 100)}%`;
-
-function formatDelay(seconds: number): string {
-  const minutes = seconds / 60;
-  if (Math.abs(minutes) < 0.1) return 'on time';
-  const sign = minutes > 0 ? '+' : '−';
-  return `${sign}${Math.abs(minutes).toFixed(1)} min`;
-}
-
-function formatShortDate(isoDate: string): string {
-  return new Date(`${isoDate}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
-}
-
-function formatDay(isoDate: string): string {
-  return new Date(`${isoDate}T00:00:00`).toLocaleDateString('en-AU', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
 }

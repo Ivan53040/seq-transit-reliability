@@ -1,4 +1,6 @@
 import type { DailyOnTime } from '../api';
+import { GOOD_RATE, percent, rateBand } from '../format';
+import { useChartWidth } from './useChartWidth';
 
 interface DailyTrendChartProps {
   data: DailyOnTime[];
@@ -8,6 +10,8 @@ interface DailyTrendChartProps {
 }
 
 export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps) {
+  const [frameRef, measuredWidth] = useChartWidth<HTMLDivElement>(920);
+
   if (data.length === 0) {
     return (
       <div className="chart-empty" role="note">
@@ -16,9 +20,12 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
     );
   }
 
-  const width = 920;
-  const height = 220;
-  const padding = { top: 28, right: 32, bottom: 48, left: 44 };
+  const width = Math.max(280, measuredWidth);
+  const narrow = width < 560;
+  const height = narrow ? 200 : 220;
+  const padding = narrow
+    ? { top: 26, right: 18, bottom: 44, left: 38 }
+    : { top: 28, right: 32, bottom: 48, left: 44 };
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
 
@@ -72,8 +79,11 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
         <span className="chart-note">Dashed line marks 90% target · gaps indicate unrecorded days</span>
       </div>
 
+      <div ref={frameRef} className="chart-frame">
       <svg
         className="accessible-chart"
+        width={width}
+        height={height}
         viewBox={`0 0 ${width} ${height}`}
         role="img"
         aria-label="Line chart showing daily on-time performance over the past week"
@@ -81,7 +91,7 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
         {/* Horizontal reference rules */}
         {gridLevels.map((level) => {
           const y = getY(level);
-          const isTarget = level === 0.9;
+          const isTarget = level === GOOD_RATE;
           return (
             <g key={level}>
               <line
@@ -124,8 +134,7 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
 
         {/* Geometric square markers + value labels */}
         {points.map((p) => {
-          const rateColor =
-            p.d.onTimeRate >= 0.9 ? 'var(--good)' : p.d.onTimeRate >= 0.75 ? 'var(--fair)' : 'var(--poor)';
+          const rateColor = `var(--${rateBand(p.d.onTimeRate)})`;
 
           return (
             <g key={p.d.serviceDate}>
@@ -139,7 +148,7 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
                 strokeWidth="2.5"
               />
               <text x={p.x} y={p.y - 12} textAnchor="middle" className="chart-val-label">
-                {Math.round(p.d.onTimeRate * 100)}%
+                {percent(p.d.onTimeRate)}
               </text>
             </g>
           );
@@ -149,14 +158,19 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
         {slots.map((slot, i) => (
           <g key={slot.date}>
             <text x={getX(i)} y={baseline + 20} textAnchor="middle" className="chart-date-label">
-              {formatShortDay(slot.date)}
+              {narrow ? formatWeekday(slot.date) : formatShortDay(slot.date)}
             </text>
             <text x={getX(i)} y={baseline + 35} textAnchor="middle" className="chart-obs-label">
-              {slot.d ? `${slot.d.observedStops.toLocaleString('en-AU')} stops` : '—'}
+              {narrow
+                ? formatDayNumber(slot.date)
+                : slot.d
+                  ? `${slot.d.observedStops.toLocaleString('en-AU')} stops`
+                  : '—'}
             </text>
           </g>
         ))}
       </svg>
+      </div>
 
       {/* Screen reader data table */}
       <div className="visually-hidden">
@@ -175,9 +189,9 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
               d ? (
                 <tr key={date}>
                   <td>{date}</td>
-                  <td>{Math.round(d.onTimeRate * 100)}%</td>
+                  <td>{percent(d.onTimeRate)}</td>
                   <td>{d.observedStops}</td>
-                  <td>{d.averageDelaySeconds} seconds</td>
+                  <td>{Math.round(d.averageDelaySeconds)} seconds</td>
                 </tr>
               ) : (
                 <tr key={date}>
@@ -196,6 +210,14 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
 function formatShortDay(isoDate: string): string {
   const d = new Date(`${isoDate}T00:00:00`);
   return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric' });
+}
+
+function formatWeekday(isoDate: string): string {
+  return new Date(`${isoDate}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short' });
+}
+
+function formatDayNumber(isoDate: string): string {
+  return String(Number(isoDate.slice(8, 10)));
 }
 
 function datesBetween(from: string, to: string): string[] {

@@ -1,4 +1,5 @@
 import type { RouteOnTime } from '../api';
+import { useChartWidth } from './useChartWidth';
 
 export type PunctualityBandKey = 'severe' | 'poor' | 'below' | 'fair' | 'good';
 
@@ -14,7 +15,7 @@ export interface PunctualityBand {
 export const PUNCTUALITY_BANDS: readonly PunctualityBand[] = [
   { key: 'severe', label: 'Under 50%', shortLabel: '<50%', min: 0, max: 0.5, tone: 'poor' },
   { key: 'poor', label: '50–64%', shortLabel: '50–64%', min: 0.5, max: 0.65, tone: 'poor' },
-  { key: 'below', label: '65–74%', shortLabel: '65–74%', min: 0.65, max: 0.75, tone: 'fair' },
+  { key: 'below', label: '65–74%', shortLabel: '65–74%', min: 0.65, max: 0.75, tone: 'poor' },
   { key: 'fair', label: '75–89%', shortLabel: '75–89%', min: 0.75, max: 0.9, tone: 'fair' },
   { key: 'good', label: '90–100%', shortLabel: '90%+', min: 0.9, max: 1.01, tone: 'good' },
 ];
@@ -38,13 +39,14 @@ export function PunctualityHistogram({
   onSelectBand,
   scopeLabel,
 }: PunctualityHistogramProps) {
+  const [frameRef, measuredWidth] = useChartWidth<HTMLDivElement>(460);
   const counts = PUNCTUALITY_BANDS.map((band) => ({
     band,
     count: routes.filter((r) => r.onTimeRate >= band.min && r.onTimeRate < band.max).length,
   }));
 
   const maxCount = Math.max(1, ...counts.map((c) => c.count));
-  const width = 460;
+  const width = Math.max(260, measuredWidth);
   const height = 164;
   const padding = { top: 26, right: 8, bottom: 30, left: 8 };
   const innerWidth = width - padding.left - padding.right;
@@ -72,11 +74,15 @@ export function PunctualityHistogram({
         )}
       </div>
 
+      {/* role="group", not "img": the bars inside are real buttons and must stay reachable. */}
+      <div ref={frameRef} className="chart-frame">
       <svg
         className="accessible-chart histogram-svg"
+        width={width}
+        height={height}
         viewBox={`0 0 ${width} ${height}`}
-        role="img"
-        aria-label={`Distribution of ${routes.length} routes across punctuality bands`}
+        role="group"
+        aria-label={`Distribution of ${routes.length} routes across punctuality bands. Select a band to filter routes.`}
       >
         {/* Subtle mid-height reference rule */}
         <line
@@ -138,6 +144,16 @@ export function PunctualityHistogram({
                 fill="transparent"
               />
 
+              {/* Keyboard focus ring (SVG groups don't draw a CSS outline reliably) */}
+              <rect
+                className="chart-focus-ring"
+                x={padding.left + idx * slotWidth + 1.5}
+                y={1.5}
+                width={slotWidth - 3}
+                height={height - 3}
+                fill="none"
+              />
+
               {/* Highlight backdrop when selected */}
               {isSelected && (
                 <rect
@@ -187,6 +203,7 @@ export function PunctualityHistogram({
           );
         })}
       </svg>
+      </div>
 
       <div className="visually-hidden">
         <table>
