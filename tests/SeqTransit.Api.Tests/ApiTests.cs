@@ -236,4 +236,50 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal("amazon.nova-micro-v1:0", doc.GetProperty("modelId").GetString());
         Assert.Equal(26, doc.GetProperty("inputFigures").GetProperty("totalObservedStops").GetInt32());
     }
+
+    [Fact]
+    public async Task Board_endpoints_return_todays_routes_and_cancellations()
+    {
+        var routes = await _client.GetFromJsonAsync<JsonElement>($"/api/routes/on-time?date={Day:yyyy-MM-dd}");
+        Assert.Equal(2, routes.GetArrayLength());
+        var bus = routes.EnumerateArray().Single(r => r.GetProperty("routeId").GetString() == "66-1");
+        Assert.Equal(25, bus.GetProperty("observedStops").GetInt32());
+        Assert.Equal(1.0, bus.GetProperty("onTimeRate").GetDouble());
+
+        var cancellations = await _client.GetFromJsonAsync<JsonElement>($"/api/cancellations?date={Day:yyyy-MM-dd}");
+        var cancelled = Assert.Single(cancellations.EnumerateArray());
+        Assert.Equal("66-1", cancelled.GetProperty("routeId").GetString());
+        Assert.Equal(1, cancelled.GetProperty("cancelledTrips").GetInt32());
+    }
+
+    [Fact]
+    public async Task Route_list_and_snapshot_list_return_seeded_rows()
+    {
+        var routes = await _client.GetFromJsonAsync<JsonElement>("/api/routes");
+        Assert.Equal(2, routes.GetArrayLength());
+
+        var snapshots = await _client.GetFromJsonAsync<JsonElement>("/api/ingestion/snapshots?limit=500");
+        var snapshot = Assert.Single(snapshots.EnumerateArray());
+        Assert.Equal(1, snapshot.GetProperty("cancelledTripCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Day_ranges_are_clamped_to_31_days()
+    {
+        var summary = await _client.GetFromJsonAsync<JsonElement>($"/api/routes/66-1?days=365&date={Day:yyyy-MM-dd}");
+        Assert.Equal($"{Day.AddDays(-30):yyyy-MM-dd}", summary.GetProperty("fromDate").GetString());
+    }
+
+    [Fact]
+    public async Task Responses_carry_cache_headers_for_cloudfront()
+    {
+        var health = await _client.GetAsync("/api/health");
+        Assert.True(health.Headers.CacheControl?.NoStore);
+
+        var today = await _client.GetAsync($"/api/routes/on-time?date={Day:yyyy-MM-dd}");
+        Assert.Equal(TimeSpan.FromMinutes(5), today.Headers.CacheControl?.MaxAge);
+
+        var settled = await _client.GetAsync($"/api/routes/on-time?date={Day.AddDays(-10):yyyy-MM-dd}");
+        Assert.Equal(TimeSpan.FromDays(1), settled.Headers.CacheControl?.MaxAge);
+    }
 }

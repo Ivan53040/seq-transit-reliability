@@ -23,8 +23,6 @@ public sealed record WeeklySummaryRunResult(
 /// </summary>
 public sealed class WeeklySummaryFunction
 {
-    public const string DefaultModelId = "amazon.nova-micro-v1:0";
-
     private static readonly Lazy<NpgsqlDataSource> DataSource =
         new(() => TransitDataSource.Create(DatabaseOptions.FromEnvironment()));
 
@@ -33,11 +31,14 @@ public sealed class WeeklySummaryFunction
 
     private readonly WeeklySummaryStore _store;
     private readonly string _modelId;
+    private readonly OnTimePolicy _policy;
 
     public WeeklySummaryFunction()
     {
         _store = new WeeklySummaryStore(DataSource.Value);
-        _modelId = Settings.Optional("BEDROCK_MODEL_ID") ?? DefaultModelId;
+        // The CDK stack is the single source of the model id (and of the IAM permission for it).
+        _modelId = Settings.Required("BEDROCK_MODEL_ID");
+        _policy = OnTimePolicy.FromEnvironment();
     }
 
     public async Task<WeeklySummaryRunResult> HandleAsync(Stream input, ILambdaContext context)
@@ -51,11 +52,11 @@ public sealed class WeeklySummaryFunction
         var currentWeekStart = today.AddDays(-daysSinceMonday);
         var lastWeekStart = currentWeekStart.AddDays(-7);
 
-        var figures = await _store.ComputeWeeklyFiguresAsync(lastWeekStart, OnTimePolicy.Default, now, timeout.Token);
+        var figures = await _store.ComputeWeeklyFiguresAsync(lastWeekStart, _policy, now, timeout.Token);
         if (figures.TotalObservedStops == 0)
         {
             // During the first week after deployment, fall back to the current week-to-date so the summary can still run.
-            figures = await _store.ComputeWeeklyFiguresAsync(currentWeekStart, OnTimePolicy.Default, now, timeout.Token);
+            figures = await _store.ComputeWeeklyFiguresAsync(currentWeekStart, _policy, now, timeout.Token);
         }
 
         if (figures.TotalObservedStops == 0)

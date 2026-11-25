@@ -25,6 +25,19 @@ public class OnTimePolicyTests
         Assert.True(strict.IsOnTime(59));
         Assert.False(strict.IsOnTime(60));
     }
+
+    [Fact]
+    public void Environment_overrides_use_the_same_names_as_the_api_configuration()
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["OnTime__EarlyToleranceSeconds"] = "0",
+            ["OnTime__LateToleranceSeconds"] = "180",
+        };
+
+        Assert.Equal(new OnTimePolicy(0, 180), OnTimePolicy.FromEnvironment(name => values.GetValueOrDefault(name)));
+        Assert.Equal(OnTimePolicy.Default, OnTimePolicy.FromEnvironment(_ => null));
+    }
 }
 
 public class SnapshotKeysTests

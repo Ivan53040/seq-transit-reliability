@@ -420,15 +420,16 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             .ToList();
     }
 
+    // Keep in step with formatMode() in web/src/api.ts.
     public static string FormatModeName(int routeType) => routeType switch
     {
         0 => "Tram",
-        1 => "Subway",
+        1 => "Metro",
         2 => "Train",
         3 => "Bus",
         4 => "Ferry",
         UnknownRouteType => "Unknown",
-        _ => "Other"
+        _ => "Transit"
     };
 }
 

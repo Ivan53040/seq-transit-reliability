@@ -27,6 +27,7 @@ const config: AppConfig = {
   monthlyBudgetUsd: 10,
   loadIntervalMinutes: 30,
   rawSnapshotRetentionDays: 30,
+  apiMaxConcurrency: 5,
   githubRepository: 'someone/seq-transit-reliability',
   artifacts: fakeArtifacts(),
 };
@@ -99,13 +100,52 @@ test('client-side routes fall back to index.html without rewriting API errors', 
       DefaultCacheBehavior: Match.objectLike({
         FunctionAssociations: [Match.objectLike({ EventType: 'viewer-request' })],
       }),
-      CustomErrorResponses: Match.absent(),
     }),
+  });
+  // Error responses only switch off error caching; none may rewrite an API error into a page.
+  const distribution = Object.values(template.findResources('AWS::CloudFront::Distribution'))[0];
+  const errors = distribution.Properties.DistributionConfig.CustomErrorResponses as Array<Record<string, unknown>>;
+  assert.deepEqual(errors.map((e) => e.ErrorCode), [500, 502, 503, 504]);
+  for (const error of errors) {
+    assert.equal(error.ErrorCachingMinTTL, 0);
+    assert.equal(error.ResponsePagePath, undefined);
+    assert.equal(error.ResponseCode, undefined);
+  }
+});
+
+test('API responses may be cached for up to a day, as the API Cache-Control header decides', () => {
+  template.hasResourceProperties('AWS::CloudFront::CachePolicy', {
+    CachePolicyConfig: Match.objectLike({ DefaultTTL: 60, MaxTTL: 86400 }),
+  });
+});
+
+test('page and API responses carry security headers', () => {
+  template.hasResourceProperties('AWS::CloudFront::ResponseHeadersPolicy', {
+    ResponseHeadersPolicyConfig: Match.objectLike({
+      SecurityHeadersConfig: Match.objectLike({
+        StrictTransportSecurity: Match.objectLike({ AccessControlMaxAgeSec: 31536000 }),
+        ContentTypeOptions: { Override: true },
+        FrameOptions: { FrameOption: 'DENY', Override: true },
+      }),
+    }),
+  });
+  const distribution = JSON.stringify(template.findResources('AWS::CloudFront::Distribution'));
+  assert.equal(distribution.match(/ResponseHeadersPolicyId/g)?.length, 2);
+});
+
+test('API concurrency is capped and loads never overlap', () => {
+  template.hasResourceProperties('AWS::Lambda::Function', {
+    Handler: 'SeqTransit.Api',
+    ReservedConcurrentExecutions: 5,
+  });
+  template.hasResourceProperties('AWS::Lambda::Function', {
+    Handler: 'SeqTransit.Ingestion::SeqTransit.Ingestion.LoadFunction::HandleAsync',
+    ReservedConcurrentExecutions: 1,
   });
 });
 
 test('alarms and a monthly budget email the alert address', () => {
-  template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
+  template.resourceCountIs('AWS::CloudWatch::Alarm', 6);
   template.hasResourceProperties('AWS::SNS::Subscription', { Protocol: 'email', Endpoint: 'alerts@example.com' });
   template.hasResourceProperties('AWS::Budgets::Budget', {
     Budget: Match.objectLike({ BudgetLimit: { Amount: 10, Unit: 'USD' } }),

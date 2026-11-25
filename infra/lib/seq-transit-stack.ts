@@ -24,6 +24,20 @@ const INGEST_DB_USER = 'seq_ingest';
 const API_DB_USER = 'seq_api';
 const METRIC_NAMESPACE = 'SeqTransit';
 const BEDROCK_MODEL_ID = 'amazon.nova-micro-v1:0';
+/** Long enough for a settled service day; the API's Cache-Control decides the actual lifetime. */
+const API_MAX_CACHE = Duration.days(1);
+/** Everything is same-origin except the OpenStreetMap tiles; Leaflet sets inline styles. */
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: https://tile.openstreetmap.org",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
 
 export interface SeqTransitStackProps extends StackProps {
   readonly config: AppConfig;
@@ -81,6 +95,8 @@ export class SeqTransitStack extends Stack {
       handler: 'SeqTransit.Ingestion::SeqTransit.Ingestion.LoadFunction::HandleAsync',
       memorySize: 1024,
       timeout: Duration.minutes(5),
+      // One load at a time: a retry can never overlap a run that is still writing.
+      reservedConcurrentExecutions: 1,
       logGroup: this.logGroup('LoadLogs'),
       environment: {
         SNAPSHOT_BUCKET: snapshots.bucketName,
@@ -100,6 +116,8 @@ export class SeqTransitStack extends Stack {
       handler: 'SeqTransit.Api',
       memorySize: 1024,
       timeout: Duration.seconds(30),
+      // Each instance holds up to 5 Aurora connections; a cap keeps a cold-start burst bounded.
+      reservedConcurrentExecutions: config.apiMaxConcurrency > 0 ? config.apiMaxConcurrency : undefined,
       logGroup: this.logGroup('ApiLogs'),
       environment: {
         DB_HOST: config.dbHost,
@@ -127,6 +145,7 @@ export class SeqTransitStack extends Stack {
     });
 
     // Weekly AI summary via Amazon Bedrock (Phase 8), guarded against invented numbers.
+    const summaryLogs = this.logGroup('SummaryLogs');
     const summaryFn = new lambda.Function(this, 'SummaryFunction', {
       ...dotnet,
       description: 'Generate a weekly plain-English reliability summary with Amazon Bedrock',
@@ -134,7 +153,7 @@ export class SeqTransitStack extends Stack {
       handler: 'SeqTransit.Ingestion::SeqTransit.Ingestion.WeeklySummaryFunction::HandleAsync',
       memorySize: 512,
       timeout: Duration.seconds(60),
-      logGroup: this.logGroup('SummaryLogs'),
+      logGroup: summaryLogs,
       environment: {
         DB_HOST: config.dbHost,
         DB_NAME: 'postgres',
@@ -184,13 +203,15 @@ export class SeqTransitStack extends Stack {
       autoDeleteObjects: true,
     });
 
-    // Cache API responses briefly at the edge: data only changes when a load runs,
-    // and every cache hit is a request the database never sees.
+    // Cache API responses at the edge: every cache hit is a request the database never sees.
+    // The API sets Cache-Control (src/SeqTransit.Api/ApiCacheHeaders.cs): a day for settled
+    // service days, five minutes for today, no-store for health and errors. The default TTL only
+    // applies to a response without the header.
     const apiCache = new cloudfront.CachePolicy(this, 'ApiCachePolicy', {
-      comment: 'Short cache for read-only API responses',
+      comment: 'Read-only API responses; lifetime set by the API Cache-Control header',
       defaultTtl: Duration.seconds(60),
       minTtl: Duration.seconds(0),
-      maxTtl: Duration.minutes(5),
+      maxTtl: API_MAX_CACHE,
       queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
       enableAcceptEncodingGzip: true,
       enableAcceptEncodingBrotli: true,
@@ -213,6 +234,27 @@ function handler(event) {
 }`),
     });
 
+    // Security headers for the page and the API. The CSP is report-only until it has been checked
+    // in a browser (Leaflet tiles, inline styles); switch it to enforcing after that.
+    const securityHeaders = new cloudfront.ResponseHeadersPolicy(this, 'SecurityHeadersPolicy', {
+      comment: 'HSTS, nosniff, frame and referrer policy, report-only CSP',
+      securityHeadersBehavior: {
+        strictTransportSecurity: { accessControlMaxAge: Duration.days(365), includeSubdomains: true, override: true },
+        contentTypeOptions: { override: true },
+        frameOptions: { frameOption: cloudfront.HeadersFrameOption.DENY, override: true },
+        referrerPolicy: { referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN, override: true },
+      },
+      customHeadersBehavior: {
+        customHeaders: [
+          {
+            header: 'Content-Security-Policy-Report-Only',
+            value: CONTENT_SECURITY_POLICY,
+            override: true,
+          },
+        ],
+      },
+    });
+
     const apiDomain = Fn.select(2, Fn.split('/', httpApi.apiEndpoint));
     const distribution = new cloudfront.Distribution(this, 'SiteDistribution', {
       comment: 'SEQ Transit Reliability',
@@ -222,6 +264,7 @@ function handler(event) {
         origin: origins.S3BucketOrigin.withOriginAccessControl(site),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        responseHeadersPolicy: securityHeaders,
         functionAssociations: [
           { function: spaRewrite, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
         ],
@@ -232,9 +275,14 @@ function handler(event) {
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
           cachePolicy: apiCache,
+          responseHeadersPolicy: securityHeaders,
           originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
         },
       },
+      // Do not cache gateway errors (a 503 while Aurora resumes, a 504 timeout): CloudFront
+      // would otherwise hold them for 10 seconds and the dashboard's retries would get the same error.
+      // No responsePagePath, so API errors are passed through unchanged, never rewritten into HTML.
+      errorResponses: [500, 502, 503, 504].map((httpStatus) => ({ httpStatus, ttl: Duration.seconds(0) })),
     });
 
     new s3deploy.BucketDeployment(this, 'DeploySite', {
@@ -268,6 +316,14 @@ function handler(event) {
       metricValue: '1',
     }).metric({ statistic: 'Sum', period: Duration.minutes(10) });
 
+    const summaryRejected = new logs.MetricFilter(this, 'SummaryRejectedFilter', {
+      logGroup: summaryLogs,
+      filterPattern: logs.FilterPattern.literal('"WEEKLY_SUMMARY_REJECTED"'),
+      metricNamespace: METRIC_NAMESPACE,
+      metricName: 'WeeklySummaryRejected',
+      metricValue: '1',
+    }).metric({ statistic: 'Sum', period: Duration.hours(1) });
+
     const alarms = [
       new cloudwatch.Alarm(this, 'NoSnapshotsAlarm', {
         alarmDescription: 'Fewer than 3 snapshots stored in 5 minutes: the fetch pipeline is failing.',
@@ -297,6 +353,22 @@ function handler(event) {
         alarmDescription: 'The HTTP API returned 5xx errors 5 or more times in 5 minutes.',
         metric: httpApi.metricServerError({ statistic: 'Sum', period: Duration.minutes(5) }),
         threshold: 5,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      }),
+      new cloudwatch.Alarm(this, 'SummaryRejectedAlarm', {
+        alarmDescription: 'The weekly summary was rejected by the numeric guardrail; last week keeps the previous summary.',
+        metric: summaryRejected,
+        threshold: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      }),
+      new cloudwatch.Alarm(this, 'SummaryErrorsAlarm', {
+        alarmDescription: 'The weekly summary function failed (Bedrock or database error).',
+        metric: summaryFn.metricErrors({ statistic: 'Sum', period: Duration.hours(1) }),
+        threshold: 1,
         comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         evaluationPeriods: 1,
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,

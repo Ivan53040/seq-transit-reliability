@@ -17,6 +17,11 @@ export interface AppConfig {
   /** How often snapshots are loaded into the database. Longer means Aurora sleeps more. */
   readonly loadIntervalMinutes: number;
   readonly rawSnapshotRetentionDays: number;
+  /**
+   * Reserved concurrency for the API function: caps open Aurora connections (5 per instance).
+   * 0 leaves it unreserved, for accounts whose Lambda concurrency quota is still the new-account 10.
+   */
+  readonly apiMaxConcurrency: number;
   /** owner/repo allowed to deploy through GitHub Actions. */
   readonly githubRepository?: string;
   /** Build outputs the stack packages. Produced by scripts/publish.(ps1|sh). */
@@ -44,6 +49,7 @@ export function loadConfig(node: Node): AppConfig {
     monthlyBudgetUsd: Number(value('monthlyBudgetUsd', 'SEQ_MONTHLY_BUDGET_USD') ?? 10),
     loadIntervalMinutes: Number(value('loadIntervalMinutes', 'SEQ_LOAD_INTERVAL_MINUTES') ?? 30),
     rawSnapshotRetentionDays: Number(value('rawSnapshotRetentionDays', 'SEQ_RAW_RETENTION_DAYS') ?? 14),
+    apiMaxConcurrency: Number(value('apiMaxConcurrency', 'SEQ_API_MAX_CONCURRENCY') ?? 5),
     githubRepository: value('githubRepository', 'SEQ_GITHUB_REPOSITORY'),
     artifacts: {
       ingestion: path.join(repoRoot, 'artifacts', 'ingestion'),

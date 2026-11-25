@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SeqTransit.Api;
 using SeqTransit.Api.Endpoints;
 using SeqTransit.Core.Reliability;
 using SeqTransit.Data;
@@ -14,6 +15,8 @@ builder.Services.AddSingleton(dataSource);
 builder.Services.AddDbContext<TransitDbContext>(options => options.UseNpgsql(dataSource));
 builder.Services.AddScoped<ReliabilityQueries>();
 builder.Services.AddSingleton(TimeProvider.System);
+// OnTime__EarlyToleranceSeconds / OnTime__LateToleranceSeconds override the default window. The weekly
+// summary function reads the same variables (OnTimePolicy.FromEnvironment), so both report one definition.
 builder.Services.AddSingleton(builder.Configuration.GetSection("OnTime").Get<OnTimePolicy>() ?? OnTimePolicy.Default);
 
 builder.Services.AddProblemDetails();
@@ -28,6 +31,7 @@ builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
+app.UseApiCacheHeaders();
 app.UseExceptionHandler();
 app.UseCors();
 app.MapOpenApi();
