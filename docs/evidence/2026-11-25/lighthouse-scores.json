@@ -1,0 +1,75 @@
+{
+  "date": "2026-11-25",
+  "site": "https://d2ckfcry48m74h.cloudfront.net",
+  "commit": "e5baaa0",
+  "lighthouseVersion": "12.8.2",
+  "chrome": "Google Chrome (headless=new)",
+  "routePage": "/routes/199-4",
+  "note": "Each page/form factor was run twice. The API was already warm for both runs (no Aurora cold start observed: /api/health answered in ~0.3s before testing); the second run is kept. firstRunPerformance shows run 1 for comparison.",
+  "runs": [
+    {
+      "page": "home",
+      "url": "https://d2ckfcry48m74h.cloudfront.net/",
+      "formFactor": "mobile",
+      "report": "lighthouse-home-mobile.report.html",
+      "scores": {
+        "performance": 99,
+        "accessibility": 100,
+        "bestPractices": 100,
+        "seo": 100
+      },
+      "lcpMs": 1741,
+      "tbtMs": 12,
+      "cls": 0.001,
+      "firstRunPerformance": 98
+    },
+    {
+      "page": "home",
+      "url": "https://d2ckfcry48m74h.cloudfront.net/",
+      "formFactor": "desktop",
+      "report": "lighthouse-home-desktop.report.html",
+      "scores": {
+        "performance": 99,
+        "accessibility": 100,
+        "bestPractices": 100,
+        "seo": 100
+      },
+      "lcpMs": 428,
+      "tbtMs": 0,
+      "cls": 0.066,
+      "firstRunPerformance": 99
+    },
+    {
+      "page": "route",
+      "url": "https://d2ckfcry48m74h.cloudfront.net/routes/199-4",
+      "formFactor": "mobile",
+      "report": "lighthouse-route-mobile.report.html",
+      "scores": {
+        "performance": 88,
+        "accessibility": 100,
+        "bestPractices": 100,
+        "seo": 100
+      },
+      "lcpMs": 1925,
+      "tbtMs": 0,
+      "cls": 0.21,
+      "firstRunPerformance": 90
+    },
+    {
+      "page": "route",
+      "url": "https://d2ckfcry48m74h.cloudfront.net/routes/199-4",
+      "formFactor": "desktop",
+      "report": "lighthouse-route-desktop.report.html",
+      "scores": {
+        "performance": 76,
+        "accessibility": 100,
+        "bestPractices": 100,
+        "seo": 100
+      },
+      "lcpMs": 369,
+      "tbtMs": 0,
+      "cls": 0.866,
+      "firstRunPerformance": 76
+    }
+  ]
+}

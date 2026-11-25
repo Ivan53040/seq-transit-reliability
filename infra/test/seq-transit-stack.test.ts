@@ -181,6 +181,10 @@ test('GitHub role trusts only the main branch of the configured repository', () 
               'token.actions.githubusercontent.com:sub': [
                 'repo:someone/seq-transit-reliability:ref:refs/heads/main',
                 'repo:someone@*/seq-transit-reliability@*:ref:refs/heads/main',
+                'repo:someone/seq-transit-reliability:environment:production',
+                'repo:someone@*/seq-transit-reliability@*:environment:production',
+                'repo:someone/seq-transit-reliability:environment:gtfs-sync',
+                'repo:someone@*/seq-transit-reliability@*:environment:gtfs-sync',
               ],
             },
           },
@@ -228,5 +232,32 @@ test('an alarm fires when Aurora has not paused for six hours', () => {
     Period: 3600,
     EvaluationPeriods: 6,
     Threshold: 0,
+  });
+});
+
+test('responses deny browser features the dashboard does not use', () => {
+  const policy = JSON.stringify(template.findResources('AWS::CloudFront::ResponseHeadersPolicy'));
+  assert.match(policy, /"Header":"Permissions-Policy","Override":true,"Value":"camera=\(\), microphone=\(\), geolocation=\(\)/);
+});
+
+test('the GitHub role may sign in to the database as postgres (migrations) and seq_ingest (GTFS sync) only', () => {
+  const github = Template.fromStack(new GitHubDeployStack(new App(), 'GitHubDb', { env, config }));
+  const policies = JSON.stringify(github.findResources('AWS::IAM::Policy'));
+  assert.match(policies, /dbuser:cluster-TESTRESOURCEID\/postgres/);
+  assert.match(policies, /dbuser:cluster-TESTRESOURCEID\/seq_ingest/);
+  assert.doesNotMatch(policies, /dbuser:cluster-TESTRESOURCEID\/seq_api/);
+});
+
+test('hashed web assets are cached for a year and the rest is revalidated on every visit', () => {
+  template.hasResourceProperties('Custom::CDKBucketDeployment', {
+    Exclude: ['*'],
+    Include: ['assets/*'],
+    Prune: false,
+    SystemMetadata: { 'cache-control': 'public, max-age=31536000, immutable' },
+  });
+  template.hasResourceProperties('Custom::CDKBucketDeployment', {
+    Exclude: ['assets/*'],
+    SystemMetadata: { 'cache-control': 'no-cache' },
+    DistributionPaths: ['/*'],
   });
 });

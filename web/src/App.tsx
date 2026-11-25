@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { Link, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ApiError,
@@ -17,10 +17,14 @@ import {
   matchesPunctualityBand,
   type PunctualityBandKey,
 } from './components/PunctualityHistogram';
-import { StopHotspotMap } from './components/StopHotspotMap';
 import { formatDay, formatDelay, formatShortDate, pageTitle, percent, rateBand } from './format';
-import { RoutePage } from './RoutePage';
 import { sampleDay } from './sample';
+
+// Leaflet and the route page are loaded on demand, so each page only downloads the code it shows.
+const StopHotspotMap = lazy(() =>
+  import('./components/StopHotspotMap').then((m) => ({ default: m.StopHotspotMap })),
+);
+const RoutePage = lazy(() => import('./RoutePage').then((m) => ({ default: m.RoutePage })));
 
 const ROWS_SHOWN_AT_FIRST = 25;
 const MIN_RELIABLE_SAMPLE = 20;
@@ -100,10 +104,12 @@ export function App() {
           </p>
         )}
 
-        <Routes>
-          <Route path="/" element={<BoardPage theme={theme} />} />
-          <Route path="/routes/:routeId" element={<RoutePage />} />
-        </Routes>
+        <Suspense fallback={null}>
+          <Routes>
+            <Route path="/" element={<BoardPage theme={theme} />} />
+            <Route path="/routes/:routeId" element={<RoutePage />} />
+          </Routes>
+        </Suspense>
       </main>
 
       <footer className="footer">
@@ -661,7 +667,9 @@ function RouteBoard({
       </div>
 
       {activeTab === 'map' && (
-        <StopHotspotMap stops={filteredStops} theme={theme} query={query} />
+        <Suspense fallback={<div className="map-section map-placeholder" aria-hidden="true" />}>
+          <StopHotspotMap stops={filteredStops} theme={theme} query={query} />
+        </Suspense>
       )}
 
       {activeTab === 'routes' && (

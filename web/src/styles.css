@@ -121,6 +121,17 @@ body {
   outline-offset: 2px;
 }
 
+/* Headings focused from script (tabindex="-1") take focus for screen readers; no ring needed. */
+[tabindex='-1']:focus {
+  outline: none;
+}
+
+/* Keep the footer below the fold while data loads, so it is not pushed down (layout shift). */
+main {
+  min-height: 100vh;
+  min-height: 100svh;
+}
+
 /* Masthead */
 .masthead {
   display: flex;
@@ -1324,6 +1335,11 @@ tbody th {
   background: var(--surface);
 }
 
+/* Holds the map's space while its code loads (toolbar + canvas). */
+.map-placeholder {
+  min-height: calc(28rem + 4.5rem);
+}
+
 .leaflet-container {
   font-family: var(--font-text);
   background: var(--surface);
@@ -1820,6 +1836,10 @@ tbody th {
 
   .hotspot-map-canvas {
     height: 21rem;
+  }
+
+  .map-placeholder {
+    min-height: calc(21rem + 6rem);
   }
 
   .legend-size-note {

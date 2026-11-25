@@ -20,10 +20,15 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(builder.Configuration.GetSection("OnTime").Get<OnTimePolicy>() ?? OnTimePolicy.Default);
 
 builder.Services.AddProblemDetails();
-builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
-    .WithOrigins(builder.Configuration["Cors:AllowedOrigin"] ?? "http://localhost:5173")
-    .AllowAnyHeader()
-    .WithMethods("GET")));
+// CORS is only for the Vite dev server on another port. In AWS the page and the API share one
+// CloudFront origin, so the deployed API sends no CORS headers and no other site may call it.
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
+        .WithOrigins(builder.Configuration["Cors:AllowedOrigin"] ?? "http://localhost:5173")
+        .AllowAnyHeader()
+        .WithMethods("GET")));
+}
 
 // In AWS, API Gateway (HTTP API) invokes this app through Lambda instead of Kestrel.
 builder.Services.AddAWSLambdaHosting(LambdaEventSource.HttpApi);
@@ -35,7 +40,12 @@ var app = builder.Build();
 app.UseOriginVerification(app.Configuration);
 app.UseApiCacheHeaders();
 app.UseExceptionHandler();
-app.UseCors();
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors();
+}
+// The OpenAPI document stays public on purpose: the API is public and read-only, and the README
+// links to it. It lists the same endpoints the dashboard already calls.
 app.MapOpenApi();
 // CloudFront forwards /api/* to API Gateway; expose the document on that behaviour too.
 app.MapOpenApi("/api/openapi/{documentName}.json");

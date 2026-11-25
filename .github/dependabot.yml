@@ -1,0 +1,25 @@
+# Weekly update PRs for every dependency ecosystem in the repository. CI runs on each PR; nothing
+# merges or deploys by itself.
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      nuget:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directory: /web
+    schedule: { interval: weekly }
+    groups:
+      web:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directory: /infra
+    schedule: { interval: weekly }
+    groups:
+      infra:
+        patterns: ['*']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
