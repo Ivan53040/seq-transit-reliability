@@ -29,12 +29,21 @@ export class GitHubDeployStack extends Stack {
           clientIds: ['sts.amazonaws.com'],
         });
 
+    const [owner, repo] = repository.split('/');
+    // GitHub OIDC sub claims may include immutable numeric IDs (repo:owner@<id>/repo@<id>:ref:refs/heads/main).
+    const subPatterns = owner && repo
+      ? [
+          `repo:${repository}:ref:refs/heads/main`,
+          `repo:${owner}@*/${repo}@*:ref:refs/heads/main`,
+        ]
+      : [`repo:${repository}:ref:refs/heads/main`];
+
     const role = new iam.Role(this, 'DeployRole', {
       description: `GitHub Actions deploys for ${repository}`,
       maxSessionDuration: Duration.hours(1),
       assumedBy: new iam.WebIdentityPrincipal(provider.oidcProviderArn, {
         StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com' },
-        StringLike: { 'token.actions.githubusercontent.com:sub': `repo:${repository}:ref:refs/heads/main` },
+        StringLike: { 'token.actions.githubusercontent.com:sub': subPatterns },
       }),
     });
 

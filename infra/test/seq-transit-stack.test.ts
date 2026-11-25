@@ -116,7 +116,12 @@ test('GitHub role trusts only the main branch of the configured repository', () 
         Match.objectLike({
           Condition: {
             StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com' },
-            StringLike: { 'token.actions.githubusercontent.com:sub': 'repo:someone/seq-transit-reliability:ref:refs/heads/main' },
+            StringLike: {
+              'token.actions.githubusercontent.com:sub': [
+                'repo:someone/seq-transit-reliability:ref:refs/heads/main',
+                'repo:someone@*/seq-transit-reliability@*:ref:refs/heads/main',
+              ],
+            },
           },
         }),
       ]),

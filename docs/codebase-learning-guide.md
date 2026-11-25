@@ -466,7 +466,7 @@
 ### 2. 為什麼 Trust Policy 嚴格鎖定單一 Repo 的 `main` 分支？
 * 在 `infra/lib/github-deploy-stack.ts` 中，Trust Policy 同時鎖定：
   * `token.actions.githubusercontent.com:aud == "sts.amazonaws.com"`
-  * `token.actions.githubusercontent.com:sub == "repo:Ivan53040/seq-transit-reliability:ref:refs/heads/main"`
+  * `token.actions.githubusercontent.com:sub` 同時支援傳統格式（`repo:Ivan53040/seq-transit-reliability:ref:refs/heads/main`）與 GitHub 新版防倉庫復活攻擊的不可變 ID 格式（`repo:Ivan53040@*/seq-transit-reliability@*:ref:refs/heads/main`，我們是直接查 AWS CloudTrail 的 `AssumeRoleWithWebIdentity` 事件抓出這項真實差異並修正的！）
 * **安全意義**：就算是同一個 Repo 的 Pull Request（包括外部人員開的 Fork PR）或其他開發分支，都**無法**假冒身分 Assume 部署角色；唯有通過 CI 檢查並正式合併進 `main` 分支的程式碼，才能取得部署權限。
 
 ### 3. 環境變數與成本設定防回歸
