@@ -431,6 +431,9 @@ public sealed class DatabaseTests(PostgresFixture database) : IAsyncLifetime
 
         Assert.Equal(3, figures.TotalObservedStops);
         Assert.Equal(2, figures.TotalRoutes);
+        // The week is still in progress at T0, so it is reported up to that day, not to Sunday.
+        Assert.Equal(Day, figures.WeekStart);
+        Assert.Equal(SeqTransit.Core.BrisbaneTime.DateOf(T0), figures.WeekEnd);
         Assert.Equal(66.7, figures.OnTimePercent);
         Assert.NotNull(figures.BestRoute);
         Assert.Equal("196", figures.BestRoute.RouteShortName);

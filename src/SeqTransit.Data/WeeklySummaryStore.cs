@@ -25,6 +25,10 @@ public sealed class WeeklySummaryStore(NpgsqlDataSource dataSource)
         CancellationToken cancellationToken)
     {
         var weekEnd = weekStart.AddDays(6);
+        // A week still in progress (the week-to-date fallback) is reported up to today, not to
+        // Sunday, so the brief never names days that have not happened yet.
+        var today = SeqTransit.Core.BrisbaneTime.DateOf(now);
+        var reportedEnd = weekEnd < today ? weekEnd : today;
         var prevStart = weekStart.AddDays(-7);
         var prevEnd = weekStart.AddDays(-1);
         var early = -policy.EarlyToleranceSeconds;
@@ -122,7 +126,7 @@ public sealed class WeeklySummaryStore(NpgsqlDataSource dataSource)
 
         return new WeeklyFigures(
             weekStart,
-            weekEnd,
+            reportedEnd,
             totalObserved,
             totalRoutes,
             onTimePercent,
