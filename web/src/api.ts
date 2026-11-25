@@ -143,9 +143,9 @@ function waitWithAbort(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 async function fetchWithWakeRetry(path: string, signal: AbortSignal): Promise<Response> {
-  // Aurora Serverless v2 auto-pauses to 0 ACU when idle and takes a few seconds to resume.
+  // Aurora Serverless v2 auto-pauses to 0 ACU when idle and can take ~8-12s to resume.
   // Retry transient 502/503/504 responses silently so visitors never see a cold-wake error screen.
-  const delays = [2000, 3500];
+  const delays = [2500, 4500, 7000];
   let response = await fetch(path, { signal, headers: { Accept: 'application/json' } });
   for (const delayMs of delays) {
     if (!TRANSIENT_WAKE_STATUSES.has(response.status)) {

@@ -131,6 +131,9 @@ export function StopHotspotMap({ stops, theme, query }: StopHotspotMapProps) {
       });
 
       marker.addTo(layer);
+      if (isSelected) {
+        marker.openPopup();
+      }
     }
   }, [mappedStops, theme, selectedStopId]);
 
