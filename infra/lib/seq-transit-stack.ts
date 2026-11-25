@@ -26,6 +26,8 @@ const METRIC_NAMESPACE = 'SeqTransit';
 const BEDROCK_MODEL_ID = 'amazon.nova-micro-v1:0';
 /** Long enough for a settled service day; the API's Cache-Control decides the actual lifetime. */
 const API_MAX_CACHE = Duration.days(1);
+/** Header CloudFront adds to every /api/* origin request; the API rejects requests without it. */
+const ORIGIN_VERIFY_HEADER = 'X-Origin-Verify';
 /** Everything is same-origin except the OpenStreetMap tiles; Leaflet sets inline styles. */
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -133,11 +135,13 @@ export class SeqTransitStack extends Stack {
     this.allowDatabaseSignIn(apiFn, config, API_DB_USER);
 
     // ---------- Schedules ----------
-    // Fetch never retries: the next run is a minute away anyway.
+    // Without reserved concurrency the fetch function shares the account's Lambda concurrency with
+    // the public API, so a burst of API traffic can throttle it. Retry for up to a minute so a
+    // throttled run still stores a snapshot; storing the same feed version twice is harmless.
     new scheduler.Schedule(this, 'FetchEveryMinute', {
       description: 'Store a TripUpdates snapshot every minute',
       schedule: scheduler.ScheduleExpression.rate(Duration.minutes(1)),
-      target: new schedulerTargets.LambdaInvoke(fetchFn, { retryAttempts: 0 }),
+      target: new schedulerTargets.LambdaInvoke(fetchFn, { retryAttempts: 3, maxEventAge: Duration.minutes(1) }),
     });
 
     // Batching loads lets Aurora Serverless pause between them; see docs/decisions.md.
@@ -193,8 +197,10 @@ export class SeqTransitStack extends Stack {
       httpApi,
       stageName: '$default',
       autoDeploy: true,
-      // A public demo should not be able to run up the bill or overload the database.
-      throttle: { rateLimit: 10, burstLimit: 20 },
+      // A public demo should not be able to run up the bill, overload the database, or use up the
+      // account's 10 Lambda executions that the fetch and load functions also need. CloudFront
+      // answers most requests from cache, so real visitors rarely reach this limit.
+      throttle: { rateLimit: 5, burstLimit: 10 },
     });
 
     // ---------- Website: S3 + CloudFront, with /api/* routed to API Gateway ----------
@@ -215,7 +221,9 @@ export class SeqTransitStack extends Stack {
       defaultTtl: Duration.seconds(60),
       minTtl: Duration.seconds(0),
       maxTtl: API_MAX_CACHE,
-      queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
+      // Only the parameters the API reads. Anything else (?x=random) would otherwise create a new
+      // cache entry per request and send every one of them to the database.
+      queryStringBehavior: cloudfront.CacheQueryStringBehavior.allowList('date', 'days', 'limit', 'minObservations'),
       enableAcceptEncodingGzip: true,
       enableAcceptEncodingBrotli: true,
     });
@@ -259,6 +267,11 @@ function handler(event) {
     });
 
     const apiDomain = Fn.select(2, Fn.split('/', httpApi.apiEndpoint));
+    // The execute-api URL is public. CloudFront proves a request came through it with this value
+    // (the stack's own UUID: stable across deploys, never in git, unknown outside the account),
+    // and the API answers 403 to any request without it, so nobody can skip the edge cache.
+    const originVerifySecret = Fn.select(2, Fn.split('/', this.stackId));
+    apiFn.addEnvironment('OriginVerify__Secret', originVerifySecret);
     const distribution = new cloudfront.Distribution(this, 'SiteDistribution', {
       comment: 'SEQ Transit Reliability',
       defaultRootObject: 'index.html',
@@ -274,7 +287,9 @@ function handler(event) {
       },
       additionalBehaviors: {
         '/api/*': {
-          origin: new origins.HttpOrigin(apiDomain),
+          origin: new origins.HttpOrigin(apiDomain, {
+            customHeaders: { [ORIGIN_VERIFY_HEADER]: originVerifySecret },
+          }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
           cachePolicy: apiCache,
@@ -374,6 +389,23 @@ function handler(event) {
         threshold: 1,
         comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      }),
+      // Any request that reaches the database keeps Aurora awake for 5 more minutes. Loads run every
+      // loadIntervalMinutes, so in a normal hour capacity drops to 0 at least once; six hours
+      // without a pause means something (a bot, a monitor) keeps waking it, at a cost per ACU-hour.
+      new cloudwatch.Alarm(this, 'DatabaseNeverPausedAlarm', {
+        alarmDescription: 'Aurora has not paused for 6 hours: something keeps waking the database.',
+        metric: new cloudwatch.Metric({
+          namespace: 'AWS/RDS',
+          metricName: 'ServerlessDatabaseCapacity',
+          dimensionsMap: { DBClusterIdentifier: config.dbHost.split('.')[0] },
+          statistic: 'Minimum',
+          period: Duration.hours(1),
+        }),
+        threshold: 0,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        evaluationPeriods: 6,
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       }),
     ];

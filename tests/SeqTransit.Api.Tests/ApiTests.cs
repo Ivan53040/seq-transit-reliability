@@ -274,12 +274,31 @@ public sealed class ApiTests : IAsyncLifetime
     public async Task Responses_carry_cache_headers_for_cloudfront()
     {
         var health = await _client.GetAsync("/api/health");
-        Assert.True(health.Headers.CacheControl?.NoStore);
+        Assert.Equal(TimeSpan.FromMinutes(1), health.Headers.CacheControl?.MaxAge);
 
         var today = await _client.GetAsync($"/api/routes/on-time?date={Day:yyyy-MM-dd}");
         Assert.Equal(TimeSpan.FromMinutes(5), today.Headers.CacheControl?.MaxAge);
 
         var settled = await _client.GetAsync($"/api/routes/on-time?date={Day.AddDays(-10):yyyy-MM-dd}");
         Assert.Equal(TimeSpan.FromDays(1), settled.Headers.CacheControl?.MaxAge);
+    }
+
+    [Fact]
+    public async Task Requests_without_the_cloudfront_header_are_rejected_when_a_secret_is_set()
+    {
+        using var guarded = _factory.WithWebHostBuilder(b => b.UseSetting(OriginVerification.SettingName, "test-secret"));
+        using var client = guarded.CreateClient();
+
+        var direct = await client.GetAsync("/api/health");
+        Assert.Equal(HttpStatusCode.Forbidden, direct.StatusCode);
+        Assert.True(direct.Headers.CacheControl?.NoStore);
+
+        using var wrong = new HttpRequestMessage(HttpMethod.Get, "/api/health");
+        wrong.Headers.Add(OriginVerification.HeaderName, "guess");
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(wrong)).StatusCode);
+
+        using var viaCloudFront = new HttpRequestMessage(HttpMethod.Get, "/api/health");
+        viaCloudFront.Headers.Add(OriginVerification.HeaderName, "test-secret");
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(viaCloudFront)).StatusCode);
     }
 }

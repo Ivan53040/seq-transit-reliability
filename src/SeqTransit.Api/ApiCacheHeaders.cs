@@ -8,8 +8,10 @@ namespace SeqTransit.Api;
 /// </summary>
 /// <remarks>
 /// <list type="bullet">
-/// <item>Health, pipeline status and every 5xx: <c>no-store</c>. A cached 503 would defeat the
-/// dashboard's retry while Aurora resumes.</item>
+/// <item>Every 5xx: <c>no-store</c>. A cached 503 would defeat the dashboard's retry while Aurora
+/// resumes.</item>
+/// <item>Health and pipeline status: one minute. Every page view asks for health, and each
+/// uncached request keeps Aurora awake for five more minutes.</item>
 /// <item>A <c>date</c> whose service day has settled: one day. Trips of a service day can run past
 /// midnight and are loaded up to one load interval later, so a day counts as settled from 06:00
 /// Brisbane time on the next day.</item>
@@ -21,10 +23,11 @@ public static class ApiCacheHeaders
     public const string NoStore = "no-store";
     public const string Settled = "public, max-age=86400";
     public const string Recent = "public, max-age=300";
+    public const string Status = "public, max-age=60";
 
     private static readonly TimeSpan SettledAfterMidnight = TimeSpan.FromHours(6);
 
-    private static readonly string[] UncachedPaths = ["/api/health", "/api/ingestion/snapshots"];
+    private static readonly string[] StatusPaths = ["/api/health", "/api/ingestion/snapshots"];
 
     public static IApplicationBuilder UseApiCacheHeaders(this IApplicationBuilder app) =>
         app.Use(async (context, next) =>
@@ -49,9 +52,14 @@ public static class ApiCacheHeaders
     /// <summary>Picks the Cache-Control value for one response. Public for unit tests.</summary>
     public static string Choose(PathString path, string? date, int statusCode, DateTimeOffset now)
     {
-        if (statusCode >= 500 || UncachedPaths.Any(p => path.StartsWithSegments(p)))
+        if (statusCode >= 500)
         {
             return NoStore;
+        }
+
+        if (StatusPaths.Any(p => path.StartsWithSegments(p)))
+        {
+            return Status;
         }
 
         if (statusCode == StatusCodes.Status200OK

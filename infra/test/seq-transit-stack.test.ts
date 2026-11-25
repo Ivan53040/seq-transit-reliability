@@ -84,7 +84,7 @@ test('buckets block all public access', () => {
 test('API is throttled and routed through CloudFront under /api/*', () => {
   template.hasResourceProperties('AWS::ApiGatewayV2::Stage', {
     StageName: '$default',
-    DefaultRouteSettings: Match.objectLike({ ThrottlingRateLimit: 10, ThrottlingBurstLimit: 20 }),
+    DefaultRouteSettings: Match.objectLike({ ThrottlingRateLimit: 5, ThrottlingBurstLimit: 10 }),
   });
   template.hasResourceProperties('AWS::CloudFront::Distribution', {
     DistributionConfig: Match.objectLike({
@@ -156,7 +156,7 @@ test('reserveConcurrency caps the API at 5 and the load function at 1', () => {
 });
 
 test('alarms and a monthly budget email the alert address', () => {
-  template.resourceCountIs('AWS::CloudWatch::Alarm', 6);
+  template.resourceCountIs('AWS::CloudWatch::Alarm', 7);
   template.hasResourceProperties('AWS::SNS::Subscription', { Protocol: 'email', Endpoint: 'alerts@example.com' });
   template.hasResourceProperties('AWS::Budgets::Budget', {
     Budget: Match.objectLike({ BudgetLimit: { Amount: 10, Unit: 'USD' } }),
@@ -187,5 +187,46 @@ test('GitHub role trusts only the main branch of the configured repository', () 
         }),
       ]),
     }),
+  });
+});
+
+test('the fetch schedule retries, so a throttled run still stores a snapshot', () => {
+  template.hasResourceProperties('AWS::Scheduler::Schedule', {
+    ScheduleExpression: 'rate(1 minute)',
+    Target: Match.objectLike({ RetryPolicy: { MaximumRetryAttempts: 3, MaximumEventAgeInSeconds: 60 } }),
+  });
+});
+
+test('the API cache key ignores query parameters the API does not read', () => {
+  template.hasResourceProperties('AWS::CloudFront::CachePolicy', {
+    CachePolicyConfig: Match.objectLike({
+      ParametersInCacheKeyAndForwardedToOrigin: Match.objectLike({
+        QueryStringsConfig: {
+          QueryStringBehavior: 'whitelist',
+          QueryStrings: ['date', 'days', 'limit', 'minObservations'],
+        },
+      }),
+    }),
+  });
+});
+
+test('CloudFront signs API origin requests and the API function knows the same value', () => {
+  const distribution = JSON.stringify(template.findResources('AWS::CloudFront::Distribution'));
+  assert.match(distribution, /"HeaderName":"X-Origin-Verify"/);
+  template.hasResourceProperties('AWS::Lambda::Function', {
+    Handler: 'SeqTransit.Api',
+    Environment: { Variables: Match.objectLike({ OriginVerify__Secret: Match.anyValue() }) },
+  });
+});
+
+test('an alarm fires when Aurora has not paused for six hours', () => {
+  template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+    Namespace: 'AWS/RDS',
+    MetricName: 'ServerlessDatabaseCapacity',
+    Dimensions: [{ Name: 'DBClusterIdentifier', Value: 'seq-transit' }],
+    Statistic: 'Minimum',
+    Period: 3600,
+    EvaluationPeriods: 6,
+    Threshold: 0,
   });
 });

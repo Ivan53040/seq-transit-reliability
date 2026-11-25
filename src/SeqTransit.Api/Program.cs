@@ -31,6 +31,8 @@ builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
+// First, so a request that skipped CloudFront never reaches the database.
+app.UseOriginVerification(app.Configuration);
 app.UseApiCacheHeaders();
 app.UseExceptionHandler();
 app.UseCors();

@@ -9,13 +9,20 @@ public class ApiCacheHeadersTests
     private static readonly DateTimeOffset Noon = new(2026, 11, 25, 12, 0, 0, TimeSpan.FromHours(10));
 
     [Theory]
-    [InlineData("/api/health", null, 200)]
-    [InlineData("/api/ingestion/snapshots", null, 200)]
+    [InlineData("/api/health", null, 503)]
     [InlineData("/api/routes/on-time", "2026-11-01", 503)]
     [InlineData("/api/routes/on-time", "2026-11-01", 500)]
-    public void Health_pipeline_status_and_server_errors_are_never_cached(string path, string? date, int status)
+    public void Server_errors_are_never_cached(string path, string? date, int status)
     {
         Assert.Equal(ApiCacheHeaders.NoStore, ApiCacheHeaders.Choose(new PathString(path), date, status, Noon));
+    }
+
+    [Theory]
+    [InlineData("/api/health")]
+    [InlineData("/api/ingestion/snapshots")]
+    public void Health_and_pipeline_status_are_cached_for_a_minute(string path)
+    {
+        Assert.Equal(ApiCacheHeaders.Status, ApiCacheHeaders.Choose(new PathString(path), null, 200, Noon));
     }
 
     [Theory]
