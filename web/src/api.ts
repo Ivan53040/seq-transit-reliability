@@ -122,8 +122,43 @@ export class ApiError extends Error {
   }
 }
 
+const TRANSIENT_WAKE_STATUSES = new Set([502, 503, 504]);
+
+function waitWithAbort(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+async function fetchWithWakeRetry(path: string, signal: AbortSignal): Promise<Response> {
+  // Aurora Serverless v2 auto-pauses to 0 ACU when idle and takes a few seconds to resume.
+  // Retry transient 502/503/504 responses silently so visitors never see a cold-wake error screen.
+  const delays = [2000, 3500];
+  let response = await fetch(path, { signal, headers: { Accept: 'application/json' } });
+  for (const delayMs of delays) {
+    if (!TRANSIENT_WAKE_STATUSES.has(response.status)) {
+      return response;
+    }
+    await waitWithAbort(delayMs, signal);
+    response = await fetch(path, { signal, headers: { Accept: 'application/json' } });
+  }
+  return response;
+}
+
 async function get<T>(path: string, signal: AbortSignal): Promise<T> {
-  const response = await fetch(path, { signal, headers: { Accept: 'application/json' } });
+  const response = await fetchWithWakeRetry(path, signal);
   if (!response.ok) {
     throw new ApiError(path, response.status);
   }
@@ -132,7 +167,7 @@ async function get<T>(path: string, signal: AbortSignal): Promise<T> {
 
 async function getOptional<T>(path: string, signal: AbortSignal): Promise<T | null> {
   try {
-    const response = await fetch(path, { signal, headers: { Accept: 'application/json' } });
+    const response = await fetchWithWakeRetry(path, signal);
     if (response.status === 404) return null;
     if (!response.ok) return null;
     return (await response.json()) as T;

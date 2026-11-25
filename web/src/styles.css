@@ -1312,6 +1312,21 @@ tbody th {
   background: var(--surface);
 }
 
+/* Swiss monochrome cartography over free OpenStreetMap tiles (overlays stay full colour) */
+.leaflet-tile-pane {
+  filter: grayscale(100%) contrast(0.92) brightness(1.06);
+}
+
+:root[data-theme='dark'] .leaflet-tile-pane {
+  filter: grayscale(100%) invert(100%) contrast(0.92) brightness(0.84);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .leaflet-tile-pane {
+    filter: grayscale(100%) invert(100%) contrast(0.92) brightness(0.84);
+  }
+}
+
 .leaflet-bar {
   border: 1px solid var(--rule-strong) !important;
   border-radius: 0 !important;

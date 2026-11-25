@@ -23,7 +23,6 @@ const DEFAULT_CENTER: [number, number] = [-27.4705, 153.026];
 export function StopHotspotMap({ stops, theme, query }: StopHotspotMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
-  const tileLayerRef = useRef<L.TileLayer | null>(null);
   const markerLayerRef = useRef<L.LayerGroup | null>(null);
 
   const [region, setRegion] = useState<RegionKey>('all');
@@ -49,7 +48,8 @@ export function StopHotspotMap({ stops, theme, query }: StopHotspotMapProps) {
     return mappedStops[0] ?? null;
   }, [mappedStops, selectedStopId]);
 
-  // Initialise Leaflet map once per mount
+  // Initialise Leaflet map once per mount with free OpenStreetMap tiles
+  // (Swiss monochrome Light/Dark styling is applied via CSS on .leaflet-tile-pane)
   useEffect(() => {
     const el = containerRef.current;
     if (!el || mapRef.current) return;
@@ -61,6 +61,11 @@ export function StopHotspotMap({ stops, theme, query }: StopHotspotMapProps) {
       zoomControl: true,
       attributionControl: true,
     });
+
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(map);
 
     const markers = L.layerGroup().addTo(map);
     mapRef.current = map;
@@ -76,31 +81,9 @@ export function StopHotspotMap({ stops, theme, query }: StopHotspotMapProps) {
       resizeObserver.disconnect();
       map.remove();
       mapRef.current = null;
-      tileLayerRef.current = null;
       markerLayerRef.current = null;
     };
   }, []);
-
-  // Swap minimal CARTO basemap whenever Light/Dark theme changes
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    if (tileLayerRef.current) {
-      tileLayerRef.current.remove();
-    }
-
-    const tileUrl =
-      theme === 'dark'
-        ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-        : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
-
-    tileLayerRef.current = L.tileLayer(tileUrl, {
-      subdomains: 'abcd',
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap &copy; CARTO',
-    }).addTo(map);
-  }, [theme]);
 
   // Render proportional Swiss signal circle markers
   useEffect(() => {
