@@ -1,4 +1,4 @@
-import { CfnOutput, Duration, Fn, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
+import { CfnOutput, Duration, Fn, RemovalPolicy, Stack, TimeZone, type StackProps } from 'aws-cdk-lib';
 import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as budgets from 'aws-cdk-lib/aws-budgets';
@@ -23,6 +23,7 @@ import { databaseUserArn } from './database-arn';
 const INGEST_DB_USER = 'seq_ingest';
 const API_DB_USER = 'seq_api';
 const METRIC_NAMESPACE = 'SeqTransit';
+const BEDROCK_MODEL_ID = 'amazon.nova-micro-v1:0';
 
 export interface SeqTransitStackProps extends StackProps {
   readonly config: AppConfig;
@@ -123,6 +124,41 @@ export class SeqTransitStack extends Stack {
       description: 'Load stored snapshots into the database',
       schedule: scheduler.ScheduleExpression.rate(Duration.minutes(config.loadIntervalMinutes)),
       target: new schedulerTargets.LambdaInvoke(loadFn, { retryAttempts: 1 }),
+    });
+
+    // Weekly AI summary via Amazon Bedrock (Phase 8), guarded against invented numbers.
+    const summaryFn = new lambda.Function(this, 'SummaryFunction', {
+      ...dotnet,
+      description: 'Generate a weekly plain-English reliability summary with Amazon Bedrock',
+      code: lambda.Code.fromAsset(config.artifacts.ingestion),
+      handler: 'SeqTransit.Ingestion::SeqTransit.Ingestion.WeeklySummaryFunction::HandleAsync',
+      memorySize: 512,
+      timeout: Duration.seconds(60),
+      logGroup: this.logGroup('SummaryLogs'),
+      environment: {
+        DB_HOST: config.dbHost,
+        DB_NAME: 'postgres',
+        DB_USER: INGEST_DB_USER,
+        BEDROCK_MODEL_ID,
+      },
+    });
+    this.allowDatabaseSignIn(summaryFn, config, INGEST_DB_USER);
+    summaryFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel'],
+        resources: [`arn:${this.partition}:bedrock:${this.region}::foundation-model/${BEDROCK_MODEL_ID}`],
+      }),
+    );
+
+    new scheduler.Schedule(this, 'WeeklySummarySchedule', {
+      description: 'Generate the weekly reliability summary every Monday at 7 am Brisbane time',
+      schedule: scheduler.ScheduleExpression.cron({
+        minute: '0',
+        hour: '7',
+        weekDay: 'MON',
+        timeZone: TimeZone.AUSTRALIA_BRISBANE,
+      }),
+      target: new schedulerTargets.LambdaInvoke(summaryFn, { retryAttempts: 1 }),
     });
 
     // ---------- HTTP API ----------

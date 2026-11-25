@@ -34,10 +34,50 @@ export interface Health {
   snapshotAgeSeconds: number | null;
 }
 
+export interface WeeklyRouteHighlight {
+  routeId: string;
+  routeShortName: string;
+  routeLongName: string;
+  observedStops: number;
+  onTimePercent: number;
+  averageDelayMinutes: number;
+}
+
+export interface WeeklyHourHighlight {
+  hour: number;
+  label: string;
+  observedStops: number;
+  onTimePercent: number;
+  averageDelayMinutes: number;
+}
+
+export interface WeeklyFigures {
+  weekStart: string;
+  weekEnd: string;
+  totalObservedStops: number;
+  totalRoutes: number;
+  onTimePercent: number;
+  previousWeekOnTimePercent: number | null;
+  changePercentagePoints: number | null;
+  bestRoute: WeeklyRouteHighlight | null;
+  worstRoute: WeeklyRouteHighlight | null;
+  worstHour: WeeklyHourHighlight | null;
+  totalCancellations: number;
+}
+
+export interface WeeklySummary {
+  weekStart: string;
+  summaryText: string;
+  inputFigures: WeeklyFigures;
+  modelId: string;
+  createdAt: string;
+}
+
 export interface DayReport {
   routes: RouteOnTime[];
   cancellations: RouteCancellations[];
   health: Health;
+  weeklySummary: WeeklySummary | null;
 }
 
 export class ApiError extends Error {
@@ -57,14 +97,26 @@ async function get<T>(path: string, signal: AbortSignal): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function getOptional<T>(path: string, signal: AbortSignal): Promise<T | null> {
+  try {
+    const response = await fetch(path, { signal, headers: { Accept: 'application/json' } });
+    if (response.status === 404) return null;
+    if (!response.ok) return null;
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export async function loadDay(date: string, signal: AbortSignal): Promise<DayReport> {
   const query = `?date=${encodeURIComponent(date)}`;
-  const [routes, cancellations, health] = await Promise.all([
+  const [routes, cancellations, health, weeklySummary] = await Promise.all([
     get<RouteOnTime[]>(`/api/routes/on-time${query}`, signal),
     get<RouteCancellations[]>(`/api/cancellations${query}`, signal),
     get<Health>('/api/health', signal),
+    getOptional<WeeklySummary>('/api/summaries/latest', signal),
   ]);
-  return { routes, cancellations, health };
+  return { routes, cancellations, health, weeklySummary };
 }
 
 export interface RouteSummary {

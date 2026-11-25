@@ -32,7 +32,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     public async Task ResetAsync()
     {
         await using var command = DataSource.CreateCommand(
-            "TRUNCATE feed_snapshot, stop_delay_observation, trip_cancellation");
+            "TRUNCATE feed_snapshot, stop_delay_observation, trip_cancellation, weekly_summary");
         await command.ExecuteNonQueryAsync();
     }
 }

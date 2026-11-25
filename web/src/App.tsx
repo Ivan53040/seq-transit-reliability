@@ -142,10 +142,66 @@ function BoardPage() {
         </div>
       )}
 
+      {load.state === 'ready' && load.report.weeklySummary && (
+        <WeeklySummaryCard summary={load.report.weeklySummary} />
+      )}
+
       {load.state === 'ready' && load.report.routes.length > 0 && (
         <RouteBoard report={load.report} date={date} />
       )}
     </>
+  );
+}
+
+function WeeklySummaryCard({ summary }: { summary: NonNullable<DayReport['weeklySummary']> }) {
+  const f = summary.inputFigures;
+  return (
+    <section className="ai-summary-card" aria-labelledby="ai-summary-heading">
+      <div className="ai-summary-head">
+        <h2 id="ai-summary-heading" className="ai-summary-title">
+          Weekly reliability summary
+        </h2>
+        <span className="ai-badge">
+          Written by AI ({summary.modelId}) from SQL figures shown
+        </span>
+      </div>
+      <p className="ai-summary-text">{summary.summaryText}</p>
+      <dl className="ai-figures-bar" aria-label="Source SQL figures">
+        <div>
+          <dt>Week</dt>
+          <dd>{f.weekStart} to {f.weekEnd}</dd>
+        </div>
+        <div>
+          <dt>On time</dt>
+          <dd>
+            {f.onTimePercent}% ({f.totalObservedStops.toLocaleString('en-AU')} stops)
+            {f.changePercentagePoints !== null && (
+              <span className="muted">
+                {' '}({f.changePercentagePoints >= 0 ? '+' : ''}{f.changePercentagePoints} pp)
+              </span>
+            )}
+          </dd>
+        </div>
+        {f.bestRoute && (
+          <div>
+            <dt>Best route</dt>
+            <dd>{f.bestRoute.routeShortName} ({f.bestRoute.onTimePercent}%)</dd>
+          </div>
+        )}
+        {f.worstRoute && (
+          <div>
+            <dt>Worst route</dt>
+            <dd>{f.worstRoute.routeShortName} ({f.worstRoute.onTimePercent}%)</dd>
+          </div>
+        )}
+        {f.worstHour && (
+          <div>
+            <dt>Slowest hour</dt>
+            <dd>{f.worstHour.label} ({f.worstHour.onTimePercent}%)</dd>
+          </div>
+        )}
+      </dl>
+    </section>
   );
 }
 

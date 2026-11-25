@@ -405,6 +405,51 @@ public sealed class DatabaseTests(PostgresFixture database) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task WeeklySummaryStore_computes_sql_figures_and_saves_summary()
+    {
+        var package = new StaticGtfsPackage(
+            [
+                new GtfsRoute("BEST-1", "196", "New Farm - Fairfield", 3),
+                new GtfsRoute("WORST-1", "574", "Loganholme - Springwood", 3),
+            ],
+            [],
+            []);
+        await new StaticGtfsLoader(database.DataSource).LoadAsync(package, CancellationToken.None);
+
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(
+            Batch(T0, [
+                Observation(1, delay: 0, feedAt: T0, eventTime: T0.AddMinutes(-20), routeId: "BEST-1"),
+                Observation(2, delay: 30, feedAt: T0, eventTime: T0.AddMinutes(-15), routeId: "BEST-1"),
+                Observation(3, delay: 420, feedAt: T0, eventTime: T0.AddMinutes(-10), routeId: "WORST-1"),
+            ]),
+            CancellationToken.None);
+
+        var store = new WeeklySummaryStore(database.DataSource);
+        var figures = await store.ComputeWeeklyFiguresAsync(Day, OnTimePolicy.Default, T0, CancellationToken.None);
+
+        Assert.Equal(3, figures.TotalObservedStops);
+        Assert.Equal(2, figures.TotalRoutes);
+        Assert.Equal(66.7, figures.OnTimePercent);
+        Assert.NotNull(figures.BestRoute);
+        Assert.Equal("196", figures.BestRoute.RouteShortName);
+        Assert.NotNull(figures.WorstRoute);
+        Assert.Equal("574", figures.WorstRoute.RouteShortName);
+        Assert.NotNull(figures.WorstHour);
+
+        const string text = "Across 2 routes and 3 stops, 66.7% ran on time.";
+        await store.SaveAsync(Day, text, figures, "amazon.nova-micro-v1:0", T0, CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var latest = await new ReliabilityQueries(db).LatestWeeklySummaryAsync(CancellationToken.None);
+        Assert.NotNull(latest);
+        Assert.Equal(Day, latest.WeekStart);
+        Assert.Equal(text, latest.SummaryText);
+        Assert.Equal("amazon.nova-micro-v1:0", latest.ModelId);
+        Assert.Equal(3, latest.InputFigures.GetProperty("totalObservedStops").GetInt32());
+    }
+
+    [Fact]
     public async Task RouteSummaryAsync_reports_no_rate_when_nothing_was_observed()
     {
         await new StaticGtfsLoader(database.DataSource).LoadAsync(

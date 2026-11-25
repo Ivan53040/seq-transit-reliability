@@ -15,6 +15,7 @@
   <ItemGroup>
     <PackageReference Include="Amazon.Lambda.Core" />
     <PackageReference Include="Amazon.Lambda.Serialization.SystemTextJson" />
+    <PackageReference Include="AWSSDK.BedrockRuntime" />
     <PackageReference Include="AWSSDK.S3" />
   </ItemGroup>
 

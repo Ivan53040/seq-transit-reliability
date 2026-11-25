@@ -39,11 +39,21 @@ test('creates no VPC and no NAT gateway', () => {
   template.resourceCountIs('AWS::EC2::NatGateway', 0);
 });
 
-test('all three .NET functions run on .NET 10 and Graviton', () => {
+test('all four .NET functions run on .NET 10 and Graviton', () => {
   const functions = template.findResources('AWS::Lambda::Function', {
     Properties: { Runtime: 'dotnet10', Architectures: ['arm64'] },
   });
-  assert.equal(Object.keys(functions).length, 3);
+  assert.equal(Object.keys(functions).length, 4);
+});
+
+test('weekly summary function invokes only one Bedrock model on Mondays at 7 am Brisbane time', () => {
+  template.hasResourceProperties('AWS::Scheduler::Schedule', {
+    ScheduleExpression: 'cron(0 7 ? * MON *)',
+    ScheduleExpressionTimezone: 'Australia/Brisbane',
+  });
+  const policies = JSON.stringify(template.findResources('AWS::IAM::Policy'));
+  assert.match(policies, /"bedrock:InvokeModel"/);
+  assert.match(policies, /foundation-model\/amazon\.nova-micro-v1:0/);
 });
 
 test('fetch runs every minute and load every 30 minutes', () => {

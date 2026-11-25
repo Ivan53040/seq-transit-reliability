@@ -30,6 +30,46 @@ export function sampleDay(): DayReport {
     routes,
     cancellations: routes.slice(0, 5).map((r, i) => ({ routeId: r.routeId, cancelledTrips: 5 - i })),
     health: { status: 'ok', latestSnapshot: new Date(Date.now() - 6 * 60_000).toISOString(), snapshotAgeSeconds: 360 },
+    weeklySummary: {
+      weekStart: '2026-11-16',
+      summaryText:
+        'Between 16 and 22 November 2026, 84.2% of 46,109 observed stops across 36 routes ran on time, down 1.8 percentage points from 86.0% the previous week. Route 196 led reliability at 96.5% on time while Route 100 lagged at 61.2%, and 5 pm was the slowest hour at 72.3% on time.',
+      inputFigures: {
+        weekStart: '2026-11-16',
+        weekEnd: '2026-11-22',
+        totalObservedStops: 46109,
+        totalRoutes: 36,
+        onTimePercent: 84.2,
+        previousWeekOnTimePercent: 86.0,
+        changePercentagePoints: -1.8,
+        bestRoute: {
+          routeId: 'S196',
+          routeShortName: '196',
+          routeLongName: 'Sample Corridor 196',
+          observedStops: 820,
+          onTimePercent: 96.5,
+          averageDelayMinutes: 0.4,
+        },
+        worstRoute: {
+          routeId: 'S100',
+          routeShortName: '100',
+          routeLongName: 'Sample Corridor 100',
+          observedStops: 340,
+          onTimePercent: 61.2,
+          averageDelayMinutes: 4.7,
+        },
+        worstHour: {
+          hour: 17,
+          label: '5 pm',
+          observedStops: 5210,
+          onTimePercent: 72.3,
+          averageDelayMinutes: 3.1,
+        },
+        totalCancellations: 15,
+      },
+      modelId: 'amazon.nova-micro-v1:0',
+      createdAt: new Date(Date.now() - 3600_000).toISOString(),
+    },
   };
 }
 

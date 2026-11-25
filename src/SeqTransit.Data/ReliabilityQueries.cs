@@ -232,6 +232,27 @@ public sealed class ReliabilityQueries(TransitDbContext db)
     public Task<DateTimeOffset?> LatestSnapshotAsync(CancellationToken cancellationToken) =>
         db.FeedSnapshots.MaxAsync(s => (DateTimeOffset?)s.FeedTimestamp, cancellationToken);
 
+    public async Task<WeeklySummaryResponse?> LatestWeeklySummaryAsync(CancellationToken cancellationToken)
+    {
+        var row = await db.WeeklySummaries
+            .AsNoTracking()
+            .OrderByDescending(s => s.WeekStart)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (row is null)
+        {
+            return null;
+        }
+
+        using var doc = System.Text.Json.JsonDocument.Parse(row.InputFiguresJson);
+        return new WeeklySummaryResponse(
+            row.WeekStart,
+            row.SummaryText,
+            doc.RootElement.Clone(),
+            row.ModelId,
+            row.CreatedAt);
+    }
+
     // The trusted-data rules (has a time and a delay, |delay| <= 1 hour) live in the
     // reliable_stop_observation view (db/migrations/0006); only "already passed" is applied here.
     private IQueryable<ReliableObservationRow> PassedStops(DateTimeOffset now) =>

@@ -21,6 +21,19 @@ public sealed class TransitDbContext(DbContextOptions<TransitDbContext> options)
 
     /// <summary>Observations that pass the data-quality rules (view from migration 0006). Read-only.</summary>
     public DbSet<ReliableObservationRow> ReliableObservations => Set<ReliableObservationRow>();
+
+    public DbSet<WeeklySummaryRow> WeeklySummaries => Set<WeeklySummaryRow>();
+}
+
+[Table("weekly_summary")]
+[PrimaryKey(nameof(WeekStart))]
+public sealed class WeeklySummaryRow
+{
+    [Column("week_start")] public DateOnly WeekStart { get; set; }
+    [Column("summary_text")] public string SummaryText { get; set; } = "";
+    [Column("input_figures", TypeName = "jsonb")] public string InputFiguresJson { get; set; } = "{}";
+    [Column("model_id")] public string ModelId { get; set; } = "";
+    [Column("created_at")] public DateTimeOffset CreatedAt { get; set; }
 }
 
 /// <summary>A row of the reliable_stop_observation view: one trusted delay per trip stop.</summary>

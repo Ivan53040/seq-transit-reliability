@@ -12,6 +12,7 @@
     <PackageVersion Include="Npgsql" Version="10.0.3" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <!-- AWS -->
+    <PackageVersion Include="AWSSDK.BedrockRuntime" Version="4.0.101.18" />
     <PackageVersion Include="AWSSDK.RDS" Version="4.0.106.2" />
     <PackageVersion Include="AWSSDK.S3" Version="4.0.104.2" />
     <PackageVersion Include="Amazon.Lambda.Core" Version="3.3.0" />

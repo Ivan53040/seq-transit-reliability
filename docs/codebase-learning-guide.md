@@ -474,6 +474,30 @@
 
 ---
 
+## Phase 8：Amazon Bedrock 每週 AI 摘要與數字幻覺防護 (AI Guardrail Engineering)
+
+在 Phase 8 中，我們整合了 **Amazon Bedrock Converse API**（使用雪梨區 `ap-southeast-2` 原生、超低成本的 `amazon.nova-micro-v1:0`），每週一早上 7 點（布里斯本時間）自動撰寫一份給通勤者閱讀的簡明週報，並加上面試含金量最高的**確定性數字防護網（Deterministic Numeric Guardrail）**。
+
+### 1. 為什麼模型「永遠不做算術」？(SQL Computes, LLM Narrates)
+* **LLM 的本質弱點**：大型語言模型是機率字詞預測器，做加總、百分比或跨週差值計算時非常容易出現微小算術錯誤或幻覺（Hallucination）。
+* **職責分離架構**：
+  1. **PostgreSQL SQL 負責 100% 的數學計算**（`WeeklySummaryStore.ComputeWeeklyFiguresAsync`）：從 `reliable_stop_observation` View 算出整週準點率、上週對比差值（percentage points）、最佳／最差路線與最塞車時段，輸出為強型別 JSON（`WeeklyFigures`）。
+  2. **Bedrock 模型只負責「看數字寫人話」**：透過 System Instruction 嚴格規定只能引用 JSON 中出現的數字，寫出 2–3 句簡明英文摘要。
+
+### 2. 如何抓出模型捏造的數字？(Numeric Guardrail)
+* 在 `src/SeqTransit.Core/Summaries/SummaryGuardrail.cs` 中，我們在寫入資料庫前對模型回覆執行確定性驗證：
+  * 用正則表達式抽出回覆中出現的**每一個數字**（含千分位逗號 `46,109`、小數 `84.2`、負數 `-1.8`、12/24 小時制時間）。
+  * 與 `WeeklyFigures` 白名單逐一比對。
+  * **只要有一個數字不在白名單中**（例如模型自己編了 `91.7%` 或自己做減法算出新數字），系統會直接**拒絕寫入**，保留上一週的有效摘要，並在 CloudWatch 記錄 `WEEKLY_SUMMARY_REJECTED` 告警。
+* `tests/SeqTransit.Core.Tests/SummaryGuardrailTests.cs` 透過單元測試證明合法回覆可通過、捏造數字必然被攔截。
+
+### 3. 最小權限與前端透明度 (Least Privilege & AI Transparency)
+* **IAM 單一模型授權**：`SummaryFunction` 的 IAM 政策僅授予 `bedrock:InvokeModel` 於**單一指定模型 ARN**（`arn:aws:bedrock:ap-southeast-2::foundation-model/amazon.nova-micro-v1:0`），絕不使用 `Resource: "*"`。
+* **EventBridge 時區排程**：使用 `cron(0 7 ? * MON *)` 搭配 `TimeZone.AUSTRALIA_BRISBANE`，確保每週一早上 7 點準時執行。
+* **透明標示**：前端看板（`GET /api/summaries/latest`）明確標註 *「Written by AI (`amazon.nova-micro-v1:0`) from SQL figures shown」*，並在摘要下方直接並列顯示 SQL 原始數字供讀者自行核對。
+
+---
+
 ## 面試直球對決 (Interview Defense Q&A)
 
 當面試官翻看你的程式碼時，最容易問的五個高難度問題：

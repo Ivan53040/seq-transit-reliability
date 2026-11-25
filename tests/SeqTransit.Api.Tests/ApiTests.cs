@@ -217,4 +217,23 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Contains(modes, m => m.GetProperty("modeName").GetString() == "Bus" && m.GetProperty("routeType").GetInt32() == 3);
         Assert.Contains(modes, m => m.GetProperty("modeName").GetString() == "Train" && m.GetProperty("routeType").GetInt32() == 2);
     }
+
+    [Fact]
+    public async Task Latest_summary_endpoint_returns_404_when_empty_and_200_after_save()
+    {
+        var missing = await _client.GetAsync("/api/summaries/latest");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+
+        var store = new WeeklySummaryStore(_fixture.DataSource);
+        var figures = await store.ComputeWeeklyFiguresAsync(Day, OnTimePolicy.Default, T0, CancellationToken.None);
+        await store.SaveAsync(Day, "Test weekly summary.", figures, "amazon.nova-micro-v1:0", T0, CancellationToken.None);
+
+        var found = await _client.GetAsync("/api/summaries/latest");
+        Assert.Equal(HttpStatusCode.OK, found.StatusCode);
+
+        var doc = await found.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Test weekly summary.", doc.GetProperty("summaryText").GetString());
+        Assert.Equal("amazon.nova-micro-v1:0", doc.GetProperty("modelId").GetString());
+        Assert.Equal(26, doc.GetProperty("inputFigures").GetProperty("totalObservedStops").GetInt32());
+    }
 }
