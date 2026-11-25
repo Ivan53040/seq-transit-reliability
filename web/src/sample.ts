@@ -34,6 +34,13 @@ export function sampleDay(): DayReport {
       { routeType: 4, modeName: 'Ferry', observedStops: 1640, onTimeStops: 1525, onTimeRate: 0.9299, averageDelaySeconds: 32 },
       { routeType: 0, modeName: 'Tram', observedStops: 3890, onTimeStops: 3423, onTimeRate: 0.8799, averageDelaySeconds: 61 },
     ],
+    worstStops: [
+      { stopId: '10795', stopName: 'Cultural Centre station, Platform 1', latitude: -27.473, longitude: 153.018, observedStops: 612, onTimeStops: 281, onTimeRate: 0.459, averageDelaySeconds: 438 },
+      { stopId: '10801', stopName: 'King George Square station, 1b', latitude: -27.468, longitude: 153.024, observedStops: 540, onTimeStops: 275, onTimeRate: 0.509, averageDelaySeconds: 372 },
+      { stopId: '10786', stopName: 'South Bank busway station, Platform 1', latitude: -27.481, longitude: 153.023, observedStops: 488, onTimeStops: 268, onTimeRate: 0.549, averageDelaySeconds: 324 },
+      { stopId: '10790', stopName: 'Mater Hill station, Platform 1', latitude: -27.485, longitude: 153.028, observedStops: 421, onTimeStops: 244, onTimeRate: 0.58, averageDelaySeconds: 294 },
+      { stopId: '600029', stopName: 'Roma Street station, Platform 5', latitude: -27.465, longitude: 153.018, observedStops: 295, onTimeStops: 194, onTimeRate: 0.658, averageDelaySeconds: 246 },
+    ],
     cancellations: routes.slice(0, 5).map((r, i) => ({ routeId: r.routeId, cancelledTrips: 5 - i })),
     health: { status: 'ok', latestSnapshot: new Date(Date.now() - 6 * 60_000).toISOString(), snapshotAgeSeconds: 360 },
     weeklySummary: {

@@ -472,6 +472,10 @@
 ### 3. 環境變數與成本設定防回歸
 * 因為 `infra/cdk.context.json` 在 `.gitignore` 中不會進版控，CI/CD 部署時所有環境參數（`SEQ_DB_HOST`、`SEQ_DB_CLUSTER_RESOURCE_ID`、`SEQ_ALERT_EMAIL`、`SEQ_MONTHLY_BUDGET_USD`、`SEQ_LOAD_INTERVAL_MINUTES`）皆透過 GitHub Repository **Variables** 注入，確保每次自動部署都精準保留 `60` 分鐘批次載入與 `$20` 預算設定，不會意外退回預設值。
 
+### 4. 每週自動同步靜態 GTFS 班表 (`.github/workflows/sync-gtfs.yml`)
+* **實戰踩坑**：Translink 會定期更新 `SEQ_GTFS.zip` 的路線 ID 版本後綴（例如 10 月的 `196-5146` 換成 11 月的 `252-11`）。若沒有跟著更新 Aurora 中的靜態班表，`LEFT JOIN` 查無資料會讓線上儀表板整排顯示 `UNKNOWN`。
+* **零維護解法**：複用既有的 OIDC 部署角色（無需額外金鑰或 IAM 權限），排程於每週一凌晨 3 點（布里斯本時間）自動下載最新版 `SEQ_GTFS.zip` 並以單一交易原子換表匯入 Aurora，徹底杜絕班表過期問題。
+
 ---
 
 ## Phase 8：Amazon Bedrock 每週 AI 摘要與數字幻覺防護 (AI Guardrail Engineering)

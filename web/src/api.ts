@@ -43,6 +43,17 @@ export interface ModeReliability {
   averageDelaySeconds: number;
 }
 
+export interface WorstStopPerformance {
+  stopId: string;
+  stopName: string;
+  latitude: number | null;
+  longitude: number | null;
+  observedStops: number;
+  onTimeStops: number;
+  onTimeRate: number;
+  averageDelaySeconds: number;
+}
+
 export interface RouteCancellations {
   routeId: string;
   cancelledTrips: number;
@@ -96,6 +107,7 @@ export interface WeeklySummary {
 export interface DayReport {
   routes: RouteOnTime[];
   modes: ModeReliability[];
+  worstStops: WorstStopPerformance[];
   cancellations: RouteCancellations[];
   health: Health;
   weeklySummary: WeeklySummary | null;
@@ -131,14 +143,15 @@ async function getOptional<T>(path: string, signal: AbortSignal): Promise<T | nu
 
 export async function loadDay(date: string, signal: AbortSignal): Promise<DayReport> {
   const query = `?date=${encodeURIComponent(date)}`;
-  const [routes, modes, cancellations, health, weeklySummary] = await Promise.all([
+  const [routes, modes, worstStops, cancellations, health, weeklySummary] = await Promise.all([
     get<RouteOnTime[]>(`/api/routes/on-time${query}`, signal),
     getOptional<ModeReliability[]>(`/api/modes/on-time${query}`, signal),
+    getOptional<WorstStopPerformance[]>(`/api/stops/worst${query}&limit=30&minObservations=20`, signal),
     get<RouteCancellations[]>(`/api/cancellations${query}`, signal),
     get<Health>('/api/health', signal),
     getOptional<WeeklySummary>('/api/summaries/latest', signal),
   ]);
-  return { routes, modes: modes ?? [], cancellations, health, weeklySummary };
+  return { routes, modes: modes ?? [], worstStops: worstStops ?? [], cancellations, health, weeklySummary };
 }
 
 export interface RouteSummary {

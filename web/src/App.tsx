@@ -9,12 +9,12 @@ import {
   type DayReport,
   type ModeReliability,
   type RouteOnTime,
+  type WorstStopPerformance,
 } from './api';
 import { RoutePage } from './RoutePage';
 import { sampleDay } from './sample';
 
 const ROWS_SHOWN_AT_FIRST = 25;
-// Below this many stops, a route's on-time rate is too noisy to rank near the top.
 const MIN_RELIABLE_SAMPLE = 20;
 
 const CANONICAL_MODES = [
@@ -24,14 +24,34 @@ const CANONICAL_MODES = [
   { routeType: 0, key: 'tram', label: 'Tram' },
 ] as const;
 
+type Theme = 'light' | 'dark';
+type BoardTab = 'routes' | 'stops';
+type SortKey = 'onTimeRate' | 'averageDelaySeconds' | 'observedStops' | 'cancellations';
+type SortDir = 'asc' | 'desc';
+
 type Load =
   | { state: 'loading' }
   | { state: 'error'; message: string }
   | { state: 'ready'; report: DayReport };
 
+function getInitialTheme(): Theme {
+  if (typeof window === 'undefined') return 'light';
+  const stored = window.localStorage.getItem('seq-theme');
+  if (stored === 'light' || stored === 'dark') return stored;
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
 export function App() {
   const [searchParams] = useSearchParams();
   const useSample = searchParams.has('sample');
+  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    window.localStorage.setItem('seq-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
 
   return (
     <div className="page">
@@ -51,7 +71,18 @@ export function App() {
             </span>
           </div>
         </Link>
-        <span className="tagline">South East Queensland · GTFS-RT Monitor</span>
+        <div className="masthead-right">
+          <span className="tagline">South East Queensland · GTFS-RT</span>
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={toggleTheme}
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} appearance`}
+          >
+            <span className="theme-dot" aria-hidden="true" />
+            {theme === 'dark' ? 'Light' : 'Dark'}
+          </button>
+        </div>
       </header>
 
       {useSample && (
@@ -133,6 +164,12 @@ function BoardPage() {
     setSearchParams(next, { replace: true });
   };
 
+  const buildRouteLink = (routeId: string) => {
+    const params = new URLSearchParams(searchParams);
+    params.set('date', date);
+    return `/routes/${encodeURIComponent(routeId)}?${params.toString()}`;
+  };
+
   return (
     <>
       <section className="summary" aria-labelledby="headline">
@@ -171,7 +208,7 @@ function BoardPage() {
       )}
 
       {load.state === 'ready' && load.report.weeklySummary && (
-        <WeeklyBrief summary={load.report.weeklySummary} />
+        <WeeklyBrief summary={load.report.weeklySummary} routeLink={buildRouteLink} />
       )}
 
       {load.state === 'ready' && load.report.routes.length === 0 && (
@@ -184,7 +221,12 @@ function BoardPage() {
       )}
 
       {load.state === 'ready' && load.report.routes.length > 0 && (
-        <RouteBoard report={load.report} date={date} mode={activeMode} onSelectMode={handleModeSelect} />
+        <RouteBoard
+          report={load.report}
+          mode={activeMode}
+          onSelectMode={handleModeSelect}
+          routeLink={buildRouteLink}
+        />
       )}
     </>
   );
@@ -258,7 +300,13 @@ function ModeStrip({
   );
 }
 
-function WeeklyBrief({ summary }: { summary: NonNullable<DayReport['weeklySummary']> }) {
+function WeeklyBrief({
+  summary,
+  routeLink,
+}: {
+  summary: NonNullable<DayReport['weeklySummary']>;
+  routeLink: (routeId: string) => string;
+}) {
   const f = summary.inputFigures;
   return (
     <section className="weekly-brief" aria-labelledby="weekly-brief-heading">
@@ -291,13 +339,21 @@ function WeeklyBrief({ summary }: { summary: NonNullable<DayReport['weeklySummar
           {f.bestRoute && (
             <div>
               <dt>Best route</dt>
-              <dd>{f.bestRoute.routeShortName} ({f.bestRoute.onTimePercent}%)</dd>
+              <dd>
+                <Link to={routeLink(f.bestRoute.routeId)} className="brief-route-link">
+                  {f.bestRoute.routeShortName} ({f.bestRoute.onTimePercent}%)
+                </Link>
+              </dd>
             </div>
           )}
           {f.worstRoute && (
             <div>
               <dt>Worst route</dt>
-              <dd>{f.worstRoute.routeShortName} ({f.worstRoute.onTimePercent}%)</dd>
+              <dd>
+                <Link to={routeLink(f.worstRoute.routeId)} className="brief-route-link">
+                  {f.worstRoute.routeShortName} ({f.worstRoute.onTimePercent}%)
+                </Link>
+              </dd>
             </div>
           )}
           {f.worstHour && (
@@ -364,16 +420,19 @@ function Headline({ load, date, isToday }: { load: Load; date: string; isToday: 
 
 function RouteBoard({
   report,
-  date,
   mode,
   onSelectMode,
+  routeLink,
 }: {
   report: DayReport;
-  date: string;
   mode: string;
   onSelectMode: (mode: string) => void;
+  routeLink: (routeId: string) => string;
 }) {
+  const [activeTab, setActiveTab] = useState<BoardTab>('routes');
   const [showAll, setShowAll] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>('onTimeRate');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -392,109 +451,260 @@ function RouteBoard({
     [report.cancellations],
   );
 
-  const ranked = [
-    ...report.routes.filter((r) => r.observedStops >= MIN_RELIABLE_SAMPLE),
-    ...report.routes.filter((r) => r.observedStops < MIN_RELIABLE_SAMPLE),
-  ];
-
-  const matches = ranked.filter((r) => {
-    const modeName = formatMode(r.routeType).toLowerCase();
-    if (mode !== 'all' && modeName !== mode) return false;
-    const q = query.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      r.routeId.toLowerCase().includes(q) ||
-      (r.routeShortName && r.routeShortName.toLowerCase().includes(q)) ||
-      (r.routeLongName && r.routeLongName.toLowerCase().includes(q))
-    );
-  });
-
-  const rows = showAll || query || mode !== 'all' ? matches : matches.slice(0, ROWS_SHOWN_AT_FIRST);
-
-  const getRouteLink = (routeId: string) => {
-    const params = new URLSearchParams(searchParams);
-    params.set('date', date);
-    return `/routes/${encodeURIComponent(routeId)}?${params.toString()}`;
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      // Sensible defaults: worst on-time first (asc); highest delay / stops / cancellations first (desc).
+      setSortDir(key === 'onTimeRate' ? 'asc' : 'desc');
+    }
   };
+
+  const sortedRoutes = useMemo(() => {
+    const filtered = report.routes.filter((r) => {
+      const modeName = formatMode(r.routeType).toLowerCase();
+      if (mode !== 'all' && modeName !== mode) return false;
+      const q = query.trim().toLowerCase();
+      if (!q) return true;
+      return (
+        r.routeId.toLowerCase().includes(q) ||
+        (r.routeShortName && r.routeShortName.toLowerCase().includes(q)) ||
+        (r.routeLongName && r.routeLongName.toLowerCase().includes(q))
+      );
+    });
+
+    const compare = (a: RouteOnTime, b: RouteOnTime) => {
+      const factor = sortDir === 'asc' ? 1 : -1;
+      const valA =
+        sortKey === 'cancellations' ? (cancelled.get(a.routeId) ?? 0) : a[sortKey];
+      const valB =
+        sortKey === 'cancellations' ? (cancelled.get(b.routeId) ?? 0) : b[sortKey];
+      if (valA !== valB) return (valA - valB) * factor;
+      return b.observedStops - a.observedStops;
+    };
+
+    // Keep low-sample routes below reliable routes when sorting by punctuality/delay.
+    if (sortKey === 'onTimeRate' || sortKey === 'averageDelaySeconds') {
+      const reliable = filtered.filter((r) => r.observedStops >= MIN_RELIABLE_SAMPLE).sort(compare);
+      const low = filtered.filter((r) => r.observedStops < MIN_RELIABLE_SAMPLE).sort(compare);
+      return [...reliable, ...low];
+    }
+
+    return [...filtered].sort(compare);
+  }, [report.routes, mode, query, sortKey, sortDir, cancelled]);
+
+  const filteredStops = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return report.worstStops;
+    return report.worstStops.filter(
+      (s) => s.stopName.toLowerCase().includes(q) || s.stopId.toLowerCase().includes(q),
+    );
+  }, [report.worstStops, query]);
+
+  const rows =
+    showAll || query || mode !== 'all' ? sortedRoutes : sortedRoutes.slice(0, ROWS_SHOWN_AT_FIRST);
+
+  const ariaSort = (key: SortKey): 'ascending' | 'descending' | 'none' =>
+    sortKey === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none';
+
+  const sortIndicator = (key: SortKey) =>
+    sortKey === key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
 
   return (
     <section className="board" aria-labelledby="board-title">
-      <div className="board-head">
-        <div className="board-head-left">
-          <h2 id="board-title">Routes, least punctual first</h2>
-          <div className="mode-tabs" role="group" aria-label="Filter by transport mode">
-            {modes.map((m) => (
-              <button
-                key={m}
-                type="button"
-                className={`mode-tab ${mode === m ? 'active' : ''}`}
-                aria-pressed={mode === m}
-                onClick={() => onSelectMode(m)}
-              >
-                {m === 'all' ? 'All' : m.charAt(0).toUpperCase() + m.slice(1)}
-              </button>
-            ))}
-          </div>
+      <div className="board-view-bar">
+        <div className="view-tabs" role="tablist" aria-label="Board view">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'routes'}
+            className={`view-tab ${activeTab === 'routes' ? 'active' : ''}`}
+            onClick={() => setActiveTab('routes')}
+          >
+            Routes <span className="tab-count">{sortedRoutes.length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'stops'}
+            className={`view-tab ${activeTab === 'stops' ? 'active' : ''}`}
+            onClick={() => setActiveTab('stops')}
+          >
+            Worst stops <span className="tab-count">{report.worstStops.length}</span>
+          </button>
         </div>
+
         <label className="search">
-          <span className="visually-hidden">Find a route</span>
+          <span className="visually-hidden">
+            {activeTab === 'routes' ? 'Filter route or corridor' : 'Filter stop name or ID'}
+          </span>
           <input
             type="search"
-            placeholder="Filter route number or corridor"
+            placeholder={activeTab === 'routes' ? 'Filter route or corridor' : 'Filter stop name or ID'}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
         </label>
       </div>
 
-      <div className="table-responsive">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Route</th>
-              <th scope="col" className="col-rate">
-                On time
-              </th>
-              <th scope="col" className="num">
-                Avg delay
-              </th>
-              <th scope="col" className="num">
-                Stops
-              </th>
-              <th scope="col" className="num">
-                Cancellations
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((route) => {
-              const link = getRouteLink(route.routeId);
-              return (
-                <RouteRow
-                  key={route.routeId}
-                  route={route}
-                  link={link}
-                  cancelledTrips={cancelled.get(route.routeId) ?? 0}
-                  onRowClick={() => navigate(link)}
-                />
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      {activeTab === 'routes' ? (
+        <>
+          <div className="board-subhead">
+            <h2 id="board-title" className="visually-hidden">
+              Routes ranked by punctuality
+            </h2>
+            <div className="mode-tabs" role="group" aria-label="Filter by transport mode">
+              {modes.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`mode-tab ${mode === m ? 'active' : ''}`}
+                  aria-pressed={mode === m}
+                  onClick={() => onSelectMode(m)}
+                >
+                  {m === 'all' ? 'All' : m.charAt(0).toUpperCase() + m.slice(1)}
+                </button>
+              ))}
+            </div>
+            <span className="board-sort-hint">Click any column header to sort</span>
+          </div>
 
-      {rows.length === 0 && (
-        <p className="board-empty">
-          No route matches “{query}” {mode !== 'all' ? `in ${mode}` : ''}.
-        </p>
-      )}
+          <div className="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Route</th>
+                  <th scope="col" className="col-rate" aria-sort={ariaSort('onTimeRate')}>
+                    <button type="button" className="sort-btn" onClick={() => handleSort('onTimeRate')}>
+                      On time{sortIndicator('onTimeRate')}
+                    </button>
+                  </th>
+                  <th scope="col" className="num" aria-sort={ariaSort('averageDelaySeconds')}>
+                    <button type="button" className="sort-btn" onClick={() => handleSort('averageDelaySeconds')}>
+                      Avg delay{sortIndicator('averageDelaySeconds')}
+                    </button>
+                  </th>
+                  <th scope="col" className="num" aria-sort={ariaSort('observedStops')}>
+                    <button type="button" className="sort-btn" onClick={() => handleSort('observedStops')}>
+                      Stops{sortIndicator('observedStops')}
+                    </button>
+                  </th>
+                  <th scope="col" className="num" aria-sort={ariaSort('cancellations')}>
+                    <button type="button" className="sort-btn" onClick={() => handleSort('cancellations')}>
+                      Cancellations{sortIndicator('cancellations')}
+                    </button>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((route) => {
+                  const link = routeLink(route.routeId);
+                  return (
+                    <RouteRow
+                      key={route.routeId}
+                      route={route}
+                      link={link}
+                      cancelledTrips={cancelled.get(route.routeId) ?? 0}
+                      onRowClick={() => navigate(link)}
+                    />
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
-      {!showAll && !query && mode === 'all' && matches.length > rows.length && (
-        <button type="button" className="show-all" onClick={() => setShowAll(true)}>
-          Show all {matches.length} routes
-        </button>
+          {rows.length === 0 && (
+            <p className="board-empty">
+              No route matches “{query}” {mode !== 'all' ? `in ${mode}` : ''}.
+            </p>
+          )}
+
+          {!showAll && !query && mode === 'all' && sortedRoutes.length > rows.length && (
+            <button type="button" className="show-all" onClick={() => setShowAll(true)}>
+              Show all {sortedRoutes.length} routes
+            </button>
+          )}
+        </>
+      ) : (
+        <WorstStopsBoard stops={filteredStops} query={query} />
       )}
     </section>
+  );
+}
+
+function WorstStopsBoard({ stops, query }: { stops: WorstStopPerformance[]; query: string }) {
+  return (
+    <>
+      <div className="board-subhead">
+        <p className="stops-board-note">
+          Highest average arrival delay across South East Queensland (minimum 20 observed stops).
+        </p>
+      </div>
+      {stops.length === 0 ? (
+        <p className="board-empty">
+          {query
+            ? `No bottleneck stop matches “${query}”.`
+            : 'No stops have reached 20 observations for this service day yet.'}
+        </p>
+      ) : (
+        <div className="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Stop</th>
+                <th scope="col" className="col-rate">
+                  On time
+                </th>
+                <th scope="col" className="num">
+                  Avg delay
+                </th>
+                <th scope="col" className="num">
+                  Stops
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {stops.map((stop, index) => {
+                const band =
+                  stop.onTimeRate >= 0.9 ? 'good' : stop.onTimeRate >= 0.75 ? 'fair' : 'poor';
+                return (
+                  <tr key={stop.stopId}>
+                    <th scope="row">
+                      <div className="stop-rank-cell">
+                        <span className="stop-rank-num">{String(index + 1).padStart(2, '0')}</span>
+                        <div>
+                          <span className="stop-name">{stop.stopName || stop.stopId}</span>
+                          <span className="stop-id muted">Stop #{stop.stopId}</span>
+                        </div>
+                      </div>
+                    </th>
+                    <td className="col-rate">
+                      <div className={`rate rate-${band}`}>
+                        <span className="rate-track" aria-hidden="true">
+                          <span
+                            className="rate-fill"
+                            style={{ width: percent(stop.onTimeRate) }}
+                          />
+                        </span>
+                        <div className="rate-figures">
+                          <span className="rate-value">{percent(stop.onTimeRate)}</span>
+                          <span className="rate-sample-count">
+                            {stop.observedStops.toLocaleString('en-AU')} stops
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="num">{formatDelay(stop.averageDelaySeconds)}</td>
+                    <td className="num">{stop.observedStops.toLocaleString('en-AU')}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
   );
 }
 

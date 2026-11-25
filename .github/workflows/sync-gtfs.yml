@@ -1,0 +1,43 @@
+name: Sync Static GTFS Timetable
+
+on:
+  schedule:
+    # Mondays at 03:00 Brisbane time (Sunday 17:00 UTC), ahead of peak service and the 07:00 weekly summary.
+    - cron: '0 17 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: sync-gtfs
+  cancel-in-progress: false
+
+jobs:
+  sync-gtfs:
+    name: Download SEQ_GTFS.zip and swap into Aurora
+    if: github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ap-southeast-2
+      DB_HOST: ${{ vars.SEQ_DB_HOST }}
+      DB_USER: postgres
+      DB_NAME: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-southeast-2
+      - name: Download latest Translink SEQ static GTFS
+        run: |
+          curl --fail --location --retry 3 --retry-delay 5 \
+            -o /tmp/SEQ_GTFS.zip \
+            https://gtfsrt.api.translink.com.au/GTFS/SEQ_GTFS.zip
+          ls -lh /tmp/SEQ_GTFS.zip
+      - name: Atomic table swap into Aurora PostgreSQL
+        run: dotnet run --project src/SeqTransit.Local -c Release -- load-gtfs /tmp/SEQ_GTFS.zip
