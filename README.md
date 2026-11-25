@@ -20,8 +20,16 @@ and GitHub Actions.
 [Validation and evidence](docs/validation-2026-10-13.md) · [AWS deployment checklist](docs/aws-deployment.md) ·
 [Case study draft](docs/case-study.md)
 
-![SEQ Transit Reliability live board — Swiss wayfinding dashboard with mode comparison, Bedrock weekly brief, and sortable routes](docs/screenshots/board.jpg)
-![Route 199 detail page — 7-day metric strip, daily trend, and hourly punctuality with AM/PM peak bands](docs/screenshots/route.jpg)
+![SEQ Transit Reliability live board — headline on-time rate, mode comparison, route-spread histogram, Bedrock weekly brief, and the stop hotspot map](docs/screenshots/board.jpg)
+![Routes view — every active route sorted by on-time rate, with average delay, observed stops, and cancellations](docs/screenshots/board-routes.jpg)
+![Route 199 detail page — 7-day metric strip, daily on-time trend, and hourly punctuality with AM/PM peak bands](docs/screenshots/route.jpg)
+
+<p>
+  <img src="docs/screenshots/board-mobile.jpg" alt="Live board on an iPhone 13 — headline on-time rate and mode comparison" width="49%">
+  <img src="docs/screenshots/route-mobile.jpg" alt="Route 199 on an iPhone 13 — metric strip and daily on-time trend" width="49%">
+</p>
+
+![Live board in dark theme — same headline, mode bars, weekly brief, and hotspot map on a dark basemap](docs/screenshots/board-dark.jpg)
 
 ## How it works
 
