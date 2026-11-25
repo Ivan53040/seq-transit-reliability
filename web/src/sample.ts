@@ -28,6 +28,12 @@ export function sampleDay(): DayReport {
 
   return {
     routes,
+    modes: [
+      { routeType: 3, modeName: 'Bus', observedStops: 28410, onTimeStops: 22980, onTimeRate: 0.8089, averageDelaySeconds: 102 },
+      { routeType: 2, modeName: 'Train', observedStops: 9120, onTimeStops: 8390, onTimeRate: 0.92, averageDelaySeconds: 48 },
+      { routeType: 4, modeName: 'Ferry', observedStops: 1640, onTimeStops: 1525, onTimeRate: 0.9299, averageDelaySeconds: 32 },
+      { routeType: 0, modeName: 'Tram', observedStops: 3890, onTimeStops: 3423, onTimeRate: 0.8799, averageDelaySeconds: 61 },
+    ],
     cancellations: routes.slice(0, 5).map((r, i) => ({ routeId: r.routeId, cancelledTrips: 5 - i })),
     health: { status: 'ok', latestSnapshot: new Date(Date.now() - 6 * 60_000).toISOString(), snapshotAgeSeconds: 360 },
     weeklySummary: {

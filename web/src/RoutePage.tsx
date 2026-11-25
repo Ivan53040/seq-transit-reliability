@@ -5,6 +5,7 @@ import {
   brisbaneToday,
   formatMode,
   loadRouteDetail,
+  modeSlug,
   type RouteDetailReport,
   type RouteStopPerformance,
 } from './api';
@@ -69,7 +70,7 @@ export function RoutePage() {
     <div className="route-detail-page">
       <nav className="detail-nav" aria-label="Breadcrumb">
         <Link to={backHref} className="back-link">
-          <span aria-hidden="true">&larr;</span> Back to all routes
+          <span aria-hidden="true">&larr;</span> All routes
         </Link>
       </nav>
 
@@ -97,10 +98,10 @@ export function RoutePage() {
             onDateChange={handleDateChange}
           />
 
-          <RouteKpiCards summary={load.report.summary} />
+          <RouteMetricsStrip summary={load.report.summary} />
 
-          <section className="analytics-grid">
-            <div className="analytics-card">
+          <section className="charts-stack" aria-label="Performance charts">
+            <div className="chart-band">
               <DailyTrendChart
                 data={load.report.daily}
                 fromDate={load.report.summary.fromDate}
@@ -108,7 +109,7 @@ export function RoutePage() {
               />
             </div>
 
-            <div className="analytics-card">
+            <div className="chart-band">
               <HourlyPerformanceChart data={load.report.hours} />
             </div>
           </section>
@@ -116,10 +117,8 @@ export function RoutePage() {
           <section className="stops-section" aria-labelledby="stops-heading">
             <div className="stops-header">
               <div>
-                <h2 id="stops-heading">Bottleneck Stops on this Route</h2>
-                <p className="stops-subtitle">
-                  Stops with the lowest on-time rates on {formatDay(date)}, worst first
-                </p>
+                <p className="section-kicker">Corridor stops · {formatDay(date)}</p>
+                <h2 id="stops-heading">Stops, least punctual first</h2>
               </div>
             </div>
 
@@ -150,26 +149,30 @@ function RouteHeader({
 }) {
   const { summary } = report;
   const isToday = date === today;
+  const slug = modeSlug(summary.routeType);
 
   return (
     <header className="route-page-header">
       <div className="route-identity">
         <div className="route-header-line">
-          <span className="route-badge large">{summary.routeShortName || summary.routeId}</span>
-          <span className="route-mode large">{formatMode(summary.routeType)}</span>
+          <span className={`route-badge large badge-${slug}`}>
+            {summary.routeShortName || summary.routeId}
+          </span>
+          <span className="route-mode-label">{formatMode(summary.routeType)}</span>
+          <span className="meta-sep" aria-hidden="true">·</span>
+          <code className="route-id-code">{summary.routeId}</code>
         </div>
         <h1 className="route-title">
           {summary.routeLongName || `Route ${summary.routeShortName || summary.routeId}`}
         </h1>
         <p className="route-subtitle">
-          Internal ID: <code>{summary.routeId}</code> &bull; Showing performance for{' '}
-          <strong>{isToday ? 'Today' : formatDay(date)}</strong>
+          Service day: <strong>{isToday ? 'Today' : formatDay(date)}</strong>
         </p>
       </div>
 
       <div className="route-date-picker">
         <label className="date-field">
-          <span>Service Day</span>
+          <span>Service day</span>
           <input
             type="date"
             value={date}
@@ -182,43 +185,41 @@ function RouteHeader({
   );
 }
 
-function RouteKpiCards({ summary }: { summary: RouteDetailReport['summary'] }) {
+function RouteMetricsStrip({ summary }: { summary: RouteDetailReport['summary'] }) {
   const rate = summary.onTimeRate;
-  const band = rate === null ? 'none' : rate >= 0.9 ? 'good' : rate >= 0.75 ? 'fair' : 'poor';
+  const band = rate === null ? 'muted' : rate >= 0.9 ? 'good' : rate >= 0.75 ? 'fair' : 'poor';
   const period = `${formatShortDate(summary.fromDate)} – ${formatShortDate(summary.toDate)}`;
 
   return (
-    <section className="kpi-grid" aria-label={`Performance for ${period}`}>
-      <div className="kpi-card">
-        <span className="kpi-label">7-Day On-Time Rate</span>
-        <div className={`kpi-value rate-${band}`}>{rate === null ? 'No data' : `${Math.round(rate * 100)}%`}</div>
-        <span className="kpi-hint">
-          {summary.observedStops.toLocaleString('en-AU')} stops observed, {period}
+    <section className="metric-strip" aria-label={`7-day summary for ${period}`}>
+      <div className="metric-cell metric-primary">
+        <span className="metric-label">7-day on-time rate</span>
+        <div className={`metric-value rate-${band}`}>
+          {rate === null ? '—' : `${Math.round(rate * 100)}%`}
+        </div>
+        <span className="metric-hint">
+          {summary.observedStops.toLocaleString('en-AU')} stops · {period}
         </span>
       </div>
 
-      <div className="kpi-card">
-        <span className="kpi-label">Typical (Median) Delay</span>
-        <div className="kpi-value">{formatOptionalDelay(summary.medianDelaySeconds)}</div>
-        <span className="kpi-hint">Half of observed stops were within this delay</span>
+      <div className="metric-cell">
+        <span className="metric-label">Median delay</span>
+        <div className="metric-value">{formatOptionalDelay(summary.medianDelaySeconds)}</div>
+        <span className="metric-hint">50th percentile</span>
       </div>
 
-      <div className="kpi-card">
-        <span className="kpi-label">P90 Risk Delay</span>
-        <div className="kpi-value">{formatOptionalDelay(summary.p90DelaySeconds)}</div>
-        <span className="kpi-hint">90% of observed stops were within this delay</span>
+      <div className="metric-cell">
+        <span className="metric-label">P90 delay</span>
+        <div className="metric-value">{formatOptionalDelay(summary.p90DelaySeconds)}</div>
+        <span className="metric-hint">90th percentile buffer</span>
       </div>
 
-      <div className="kpi-card">
-        <span className="kpi-label">Feed-Reported Cancellations</span>
-        <div className="kpi-value">
-          {summary.cancelledTrips === 0 ? (
-            <span className="muted">0</span>
-          ) : (
-            summary.cancelledTrips
-          )}
+      <div className="metric-cell">
+        <span className="metric-label">Feed cancellations</span>
+        <div className="metric-value">
+          {summary.cancelledTrips === 0 ? <span className="muted">0</span> : summary.cancelledTrips}
         </div>
-        <span className="kpi-hint">Recorded {period}; zero does not confirm all trips ran</span>
+        <span className="metric-hint">Explicitly reported</span>
       </div>
     </section>
   );
@@ -230,15 +231,15 @@ function StopsTable({ stops }: { stops: RouteStopPerformance[] }) {
       <table>
         <thead>
           <tr>
-            <th scope="col">Stop Name</th>
+            <th scope="col">Stop</th>
             <th scope="col" className="col-rate">
               On time
             </th>
             <th scope="col" className="num">
-              Average delay
+              Avg delay
             </th>
             <th scope="col" className="num">
-              Observations
+              Stops
             </th>
           </tr>
         </thead>

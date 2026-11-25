@@ -23,6 +23,26 @@ export function formatMode(routeType: number): string {
   }
 }
 
+export function modeSlug(routeType: number): string {
+  switch (routeType) {
+    case 0: return 'tram';
+    case 1: return 'metro';
+    case 2: return 'train';
+    case 3: return 'bus';
+    case 4: return 'ferry';
+    default: return 'other';
+  }
+}
+
+export interface ModeReliability {
+  routeType: number;
+  modeName: string;
+  observedStops: number;
+  onTimeStops: number;
+  onTimeRate: number;
+  averageDelaySeconds: number;
+}
+
 export interface RouteCancellations {
   routeId: string;
   cancelledTrips: number;
@@ -75,6 +95,7 @@ export interface WeeklySummary {
 
 export interface DayReport {
   routes: RouteOnTime[];
+  modes: ModeReliability[];
   cancellations: RouteCancellations[];
   health: Health;
   weeklySummary: WeeklySummary | null;
@@ -110,13 +131,14 @@ async function getOptional<T>(path: string, signal: AbortSignal): Promise<T | nu
 
 export async function loadDay(date: string, signal: AbortSignal): Promise<DayReport> {
   const query = `?date=${encodeURIComponent(date)}`;
-  const [routes, cancellations, health, weeklySummary] = await Promise.all([
+  const [routes, modes, cancellations, health, weeklySummary] = await Promise.all([
     get<RouteOnTime[]>(`/api/routes/on-time${query}`, signal),
+    getOptional<ModeReliability[]>(`/api/modes/on-time${query}`, signal),
     get<RouteCancellations[]>(`/api/cancellations${query}`, signal),
     get<Health>('/api/health', signal),
     getOptional<WeeklySummary>('/api/summaries/latest', signal),
   ]);
-  return { routes, cancellations, health, weeklySummary };
+  return { routes, modes: modes ?? [], cancellations, health, weeklySummary };
 }
 
 export interface RouteSummary {

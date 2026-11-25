@@ -16,21 +16,17 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
     );
   }
 
-  // Dimensions
-  const width = 640;
+  const width = 920;
   const height = 220;
-  const padding = { top: 25, right: 30, bottom: 45, left: 45 };
+  const padding = { top: 28, right: 32, bottom: 48, left: 44 };
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
 
-  // One slot per day in the period, so a day without data shows as a gap instead of
-  // silently joining its neighbours.
   const byDate = new Map(data.map((d) => [d.serviceDate, d]));
   const slots = datesBetween(fromDate, toDate).map((date) => ({ date, d: byDate.get(date) }));
 
-  // Domain: Y-axis from 50% to 100% (or min rate - 10% to 100%)
   const minRate = Math.min(...data.map((d) => d.onTimeRate));
-  const yMin = Math.max(0, Math.floor((minRate - 0.05) * 10) / 10);
+  const yMin = Math.max(0, Math.floor((minRate - 0.1) * 10) / 10);
   const yMax = 1.0;
 
   const getX = (index: number) => {
@@ -44,7 +40,6 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
     return padding.top + innerHeight - normalized * innerHeight;
   };
 
-  // Build the line in runs of consecutive days; a missing day breaks the line.
   const runs: { x: number; y: number; d: DailyOnTime }[][] = [];
   let current: { x: number; y: number; d: DailyOnTime }[] = [];
   slots.forEach((slot, i) => {
@@ -62,23 +57,20 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
   const pathData = runs
     .map((run) => run.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' '))
     .join(' ');
-  const areaData = runs
-    .filter((run) => run.length > 1)
-    .map(
-      (run) =>
-        `${run.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')} L ${run[run.length - 1].x} ${baseline} L ${run[0].x} ${baseline} Z`,
-    )
-    .join(' ');
 
-  // Grid lines
-  const gridLevels = [0.6, 0.75, 0.9, 1.0].filter((l) => l >= yMin);
+  const gridLevels = [0.25, 0.5, 0.75, 0.9, 1.0].filter((l) => l >= yMin);
 
   return (
     <div className="chart-wrapper" aria-labelledby="daily-chart-heading">
-      <h2 id="daily-chart-heading" className="chart-title">
-        7-Day On-Time Trend
-      </h2>
-      <p className="chart-subtitle">Daily percentage of stops served on schedule</p>
+      <div className="chart-header-row">
+        <div>
+          <p className="section-kicker">7-day history</p>
+          <h2 id="daily-chart-heading" className="chart-title">
+            Daily on-time rate
+          </h2>
+        </div>
+        <span className="chart-note">Dashed line marks 90% target · gaps indicate unrecorded days</span>
+      </div>
 
       <svg
         className="accessible-chart"
@@ -86,77 +78,87 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
         role="img"
         aria-label="Line chart showing daily on-time performance over the past week"
       >
-        <defs>
-          <linearGradient id="trendGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--jacaranda)" stopOpacity="0.25" />
-            <stop offset="100%" stopColor="var(--jacaranda)" stopOpacity="0.0" />
-          </linearGradient>
-        </defs>
-
-        {/* Horizontal grid lines & target references */}
+        {/* Horizontal reference rules */}
         {gridLevels.map((level) => {
           const y = getY(level);
+          const isTarget = level === 0.9;
           return (
-            <g key={level} className="chart-grid">
+            <g key={level}>
               <line
                 x1={padding.left}
                 y1={y}
                 x2={width - padding.right}
                 y2={y}
-                stroke="var(--rule)"
-                strokeDasharray={level === 0.9 ? '4 3' : '2 2'}
-                strokeWidth={level === 0.9 ? 1.5 : 1}
+                stroke={isTarget ? 'var(--ink)' : 'var(--rule)'}
+                strokeOpacity={isTarget ? 0.35 : 1}
+                strokeDasharray={isTarget ? '4 4' : undefined}
+                strokeWidth="1"
               />
-              <text x={padding.left - 8} y={y + 4} textAnchor="end" className="chart-axis-label">
+              <text x={padding.left - 10} y={y + 4} textAnchor="end" className="chart-axis-label">
                 {Math.round(level * 100)}%
               </text>
             </g>
           );
         })}
 
-        {/* Area fill */}
-        {areaData && <path d={areaData} fill="url(#trendGradient)" />}
+        {/* Baseline axis */}
+        <line
+          x1={padding.left}
+          y1={baseline}
+          x2={width - padding.right}
+          y2={baseline}
+          stroke="var(--ink)"
+          strokeWidth="1.5"
+        />
 
-        {/* Trend line */}
+        {/* Crisp Swiss trend stroke (no gradient wash) */}
         {pathData && (
           <path
             d={pathData}
             fill="none"
-            stroke="var(--jacaranda)"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+            stroke="var(--ink)"
+            strokeWidth="2.2"
+            strokeLinejoin="miter"
           />
         )}
 
-        {/* Data points & labels */}
+        {/* Geometric square markers + value labels */}
         {points.map((p) => {
           const rateColor =
             p.d.onTimeRate >= 0.9 ? 'var(--good)' : p.d.onTimeRate >= 0.75 ? 'var(--fair)' : 'var(--poor)';
 
           return (
-            <g key={p.d.serviceDate} className="chart-point">
-              <circle cx={p.x} cy={p.y} r="4.5" fill="var(--surface)" stroke={rateColor} strokeWidth="2.5" />
-              <text x={p.x} y={p.y - 10} textAnchor="middle" className="chart-val-label" fill="var(--ink)">
+            <g key={p.d.serviceDate}>
+              <rect
+                x={p.x - 4.5}
+                y={p.y - 4.5}
+                width="9"
+                height="9"
+                fill="var(--paper)"
+                stroke={rateColor}
+                strokeWidth="2.5"
+              />
+              <text x={p.x} y={p.y - 12} textAnchor="middle" className="chart-val-label">
                 {Math.round(p.d.onTimeRate * 100)}%
               </text>
             </g>
           );
         })}
-        {/* Day labels: every day in the period, including days without data */}
+
+        {/* X-axis slots */}
         {slots.map((slot, i) => (
           <g key={slot.date}>
             <text x={getX(i)} y={baseline + 20} textAnchor="middle" className="chart-date-label">
               {formatShortDay(slot.date)}
             </text>
-            <text x={getX(i)} y={baseline + 34} textAnchor="middle" className="chart-obs-label" fill="var(--muted)">
-              {slot.d ? `${slot.d.observedStops} stops` : 'no data'}
+            <text x={getX(i)} y={baseline + 35} textAnchor="middle" className="chart-obs-label">
+              {slot.d ? `${slot.d.observedStops.toLocaleString('en-AU')} stops` : '—'}
             </text>
           </g>
         ))}
       </svg>
 
-      {/* Screen reader table ensuring 100% accessible text presentation */}
+      {/* Screen reader data table */}
       <div className="visually-hidden">
         <table>
           <caption>Daily on-time rate for each day in the period</caption>
@@ -196,7 +198,6 @@ function formatShortDay(isoDate: string): string {
   return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric' });
 }
 
-/** Every yyyy-mm-dd date from `from` to `to`, inclusive. */
 function datesBetween(from: string, to: string): string[] {
   const dates: string[] = [];
   const day = new Date(`${from}T00:00:00Z`);

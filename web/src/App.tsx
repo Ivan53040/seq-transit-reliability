@@ -5,16 +5,24 @@ import {
   brisbaneToday,
   formatMode,
   loadDay,
+  modeSlug,
   type DayReport,
+  type ModeReliability,
   type RouteOnTime,
 } from './api';
 import { RoutePage } from './RoutePage';
 import { sampleDay } from './sample';
 
 const ROWS_SHOWN_AT_FIRST = 25;
+// Below this many stops, a route's on-time rate is too noisy to rank near the top.
+const MIN_RELIABLE_SAMPLE = 20;
 
-/** Below this many observed stops a route's rate is mostly noise, so it is listed after the others. */
-export const MIN_RELIABLE_SAMPLE = 20;
+const CANONICAL_MODES = [
+  { routeType: 3, key: 'bus', label: 'Bus' },
+  { routeType: 2, key: 'train', label: 'Train' },
+  { routeType: 4, key: 'ferry', label: 'Ferry' },
+  { routeType: 0, key: 'tram', label: 'Tram' },
+] as const;
 
 type Load =
   | { state: 'loading' }
@@ -29,17 +37,26 @@ export function App() {
     <div className="page">
       <header className="masthead">
         <Link to={`/${searchParams.toString() ? `?${searchParams.toString()}` : ''}`} className="brand-link">
-          <p className="brand">
-            <span className="brand-mark" aria-hidden="true" />
-            SEQ Transit Reliability
-          </p>
+          <div className="brand">
+            <svg className="brand-emblem" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+              <rect width="24" height="24" fill="currentColor" />
+              <line x1="5" y1="8" x2="19" y2="8" stroke="var(--paper)" strokeWidth="2.2" />
+              <line x1="5" y1="16" x2="19" y2="16" stroke="var(--paper)" strokeWidth="2.2" />
+              <circle cx="9" cy="8" r="2.2" fill="var(--signal-red)" />
+              <circle cx="15" cy="16" r="2.2" fill="var(--paper)" />
+            </svg>
+            <span className="brand-wordmark">
+              <strong>SEQ TRANSIT</strong>
+              <span className="brand-sub">RELIABILITY</span>
+            </span>
+          </div>
         </Link>
-        <span className="tagline">South East Queensland Transit Performance</span>
+        <span className="tagline">South East Queensland · GTFS-RT Monitor</span>
       </header>
 
       {useSample && (
         <p className="notice" role="note">
-          Sample data mode. Remove <code>?sample</code> from the address to see real live data from Translink.
+          Sample data mode. Remove <code>?sample</code> from the address to view live Translink data.
         </p>
       )}
 
@@ -53,11 +70,10 @@ export function App() {
       <footer className="footer">
         <p>
           On time means arriving between 1 minute early and 5 minutes late, counted only at stops the vehicle
-          has already passed. Sample sizes are always presented alongside punctuality rates. Source: Translink
-          real-time GTFS-RT feed and South East Queensland GTFS Timetable, licensed under CC BY 4.0.
-          This is a common stop-level window, not Translink’s official performance measure.
-          Cancellation counts include only cancellations explicitly reported in the feed; zero does not
-          confirm that every scheduled trip ran.
+          has already passed. Sample sizes are always shown alongside rates. Source: Translink real-time
+          GTFS-RT feed and SEQ GTFS Timetable (CC BY 4.0). This is a stop-level window, not Translink’s
+          official performance measure. Feed-reported cancellation counts reflect only cancellations published
+          in the feed; zero does not confirm that every scheduled trip ran.
         </p>
       </footer>
     </div>
@@ -69,6 +85,10 @@ function BoardPage() {
   const today = brisbaneToday();
   const date = searchParams.get('date') || today;
   const useSample = searchParams.has('sample');
+
+  const modes = ['all', 'bus', 'train', 'ferry', 'tram'];
+  const modeParam = searchParams.get('mode') ?? 'all';
+  const activeMode = modes.includes(modeParam) ? modeParam : 'all';
 
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [attempt, setAttempt] = useState(0);
@@ -106,6 +126,13 @@ function BoardPage() {
     setSearchParams(next);
   };
 
+  const handleModeSelect = (nextMode: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (nextMode === 'all' || nextMode === activeMode) next.delete('mode');
+    else next.set('mode', nextMode);
+    setSearchParams(next, { replace: true });
+  };
+
   return (
     <>
       <section className="summary" aria-labelledby="headline">
@@ -124,6 +151,8 @@ function BoardPage() {
         </div>
       </section>
 
+      {load.state === 'loading' && <BoardSkeleton />}
+
       {load.state === 'error' && (
         <div className="message" role="alert">
           <p>{load.message}</p>
@@ -133,133 +162,236 @@ function BoardPage() {
         </div>
       )}
 
+      {load.state === 'ready' && load.report.routes.length > 0 && (
+        <ModeStrip
+          modes={load.report.modes}
+          activeMode={activeMode}
+          onSelectMode={handleModeSelect}
+        />
+      )}
+
+      {load.state === 'ready' && load.report.weeklySummary && (
+        <WeeklyBrief summary={load.report.weeklySummary} />
+      )}
+
       {load.state === 'ready' && load.report.routes.length === 0 && (
         <div className="message">
           <p>
             No stops have been recorded for this day yet. Data is loaded in batches, so new stops can take up to
-            half an hour to appear.
+            an hour to appear.
           </p>
         </div>
       )}
 
-      {load.state === 'ready' && load.report.weeklySummary && (
-        <WeeklySummaryCard summary={load.report.weeklySummary} />
-      )}
-
       {load.state === 'ready' && load.report.routes.length > 0 && (
-        <RouteBoard report={load.report} date={date} />
+        <RouteBoard report={load.report} date={date} mode={activeMode} onSelectMode={handleModeSelect} />
       )}
     </>
   );
 }
 
-function WeeklySummaryCard({ summary }: { summary: NonNullable<DayReport['weeklySummary']> }) {
+function ModeStrip({
+  modes,
+  activeMode,
+  onSelectMode,
+}: {
+  modes: ModeReliability[];
+  activeMode: string;
+  onSelectMode: (mode: string) => void;
+}) {
+  const byType = new Map(modes.map((m) => [m.routeType, m]));
+
+  return (
+    <section className="mode-strip" aria-label="Punctuality by transport mode">
+      <div className="section-kicker-row">
+        <span className="section-kicker">Network by mode</span>
+        {activeMode !== 'all' && (
+          <button type="button" className="text-reset-btn" onClick={() => onSelectMode('all')}>
+            Clear filter ({activeMode})
+          </button>
+        )}
+      </div>
+      <div className="mode-grid" role="group" aria-label="Filter routes by mode">
+        {CANONICAL_MODES.map(({ routeType, key, label }) => {
+          const stat = byType.get(routeType);
+          const hasData = stat !== undefined && stat.observedStops > 0;
+          const isSelected = activeMode === key;
+          const band = !hasData
+            ? 'muted'
+            : stat.onTimeRate >= 0.9
+              ? 'good'
+              : stat.onTimeRate >= 0.75
+                ? 'fair'
+                : 'poor';
+
+          return (
+            <button
+              key={key}
+              type="button"
+              className={`mode-tile mode-accent-${key} ${isSelected ? 'selected' : ''}`}
+              aria-pressed={isSelected}
+              onClick={() => onSelectMode(key)}
+            >
+              <div className="mode-tile-top">
+                <span className="mode-tile-name">{label}</span>
+                <span className="mode-tile-dot" aria-hidden="true" />
+              </div>
+              <div className={`mode-tile-rate rate-${band}`}>
+                {hasData ? percent(stat.onTimeRate) : '—'}
+              </div>
+              <div className="mode-tile-meta">
+                {hasData ? (
+                  <>
+                    <span>{formatDelay(stat.averageDelaySeconds)}</span>
+                    <span className="meta-sep" aria-hidden="true">·</span>
+                    <span>{stat.observedStops.toLocaleString('en-AU')} stops</span>
+                  </>
+                ) : (
+                  <span>No stops recorded</span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function WeeklyBrief({ summary }: { summary: NonNullable<DayReport['weeklySummary']> }) {
   const f = summary.inputFigures;
   return (
-    <section className="ai-summary-card" aria-labelledby="ai-summary-heading">
-      <div className="ai-summary-head">
-        <h2 id="ai-summary-heading" className="ai-summary-title">
-          Weekly reliability summary
+    <section className="weekly-brief" aria-labelledby="weekly-brief-heading">
+      <div className="weekly-brief-aside">
+        <h2 id="weekly-brief-heading" className="section-kicker">
+          Weekly brief
         </h2>
-        <span className="ai-badge">
-          Written by AI ({summary.modelId}) from SQL figures shown
-        </span>
+        <p className="brief-period">
+          {formatShortDate(f.weekStart)} – {formatShortDate(f.weekEnd)}
+        </p>
+        <p className="brief-meta">
+          Written by AI ({summary.modelId}) from SQL figures shown.
+        </p>
       </div>
-      <p className="ai-summary-text">{summary.summaryText}</p>
-      <dl className="ai-figures-bar" aria-label="Source SQL figures">
-        <div>
-          <dt>Week</dt>
-          <dd>{f.weekStart} to {f.weekEnd}</dd>
-        </div>
-        <div>
-          <dt>On time</dt>
-          <dd>
-            {f.onTimePercent}% ({f.totalObservedStops.toLocaleString('en-AU')} stops)
-            {f.changePercentagePoints !== null && (
-              <span className="muted">
-                {' '}({f.changePercentagePoints >= 0 ? '+' : ''}{f.changePercentagePoints} pp)
-              </span>
-            )}
-          </dd>
-        </div>
-        {f.bestRoute && (
+      <div className="weekly-brief-body">
+        <p className="brief-text">{summary.summaryText}</p>
+        <dl className="brief-figures" aria-label="Source SQL figures">
           <div>
-            <dt>Best route</dt>
-            <dd>{f.bestRoute.routeShortName} ({f.bestRoute.onTimePercent}%)</dd>
+            <dt>Week on time</dt>
+            <dd>
+              {f.onTimePercent}%
+              <span className="muted"> ({f.totalObservedStops.toLocaleString('en-AU')} stops)</span>
+              {f.changePercentagePoints !== null && (
+                <span className="muted">
+                  {' '}{f.changePercentagePoints >= 0 ? '+' : ''}{f.changePercentagePoints} pp
+                </span>
+              )}
+            </dd>
           </div>
-        )}
-        {f.worstRoute && (
-          <div>
-            <dt>Worst route</dt>
-            <dd>{f.worstRoute.routeShortName} ({f.worstRoute.onTimePercent}%)</dd>
-          </div>
-        )}
-        {f.worstHour && (
-          <div>
-            <dt>Slowest hour</dt>
-            <dd>{f.worstHour.label} ({f.worstHour.onTimePercent}%)</dd>
-          </div>
-        )}
-      </dl>
+          {f.bestRoute && (
+            <div>
+              <dt>Best route</dt>
+              <dd>{f.bestRoute.routeShortName} ({f.bestRoute.onTimePercent}%)</dd>
+            </div>
+          )}
+          {f.worstRoute && (
+            <div>
+              <dt>Worst route</dt>
+              <dd>{f.worstRoute.routeShortName} ({f.worstRoute.onTimePercent}%)</dd>
+            </div>
+          )}
+          {f.worstHour && (
+            <div>
+              <dt>Slowest hour</dt>
+              <dd>{f.worstHour.label} ({f.worstHour.onTimePercent}%)</dd>
+            </div>
+          )}
+        </dl>
+      </div>
     </section>
+  );
+}
+
+function BoardSkeleton() {
+  return (
+    <div className="skeleton-wrap" aria-hidden="true">
+      <div className="skeleton-modes">
+        <div className="skeleton-block" />
+        <div className="skeleton-block" />
+        <div className="skeleton-block" />
+        <div className="skeleton-block" />
+      </div>
+      <div className="skeleton-rows">
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="skeleton-row" />
+        ))}
+      </div>
+    </div>
   );
 }
 
 function Headline({ load, date, isToday }: { load: Load; date: string; isToday: boolean }) {
   if (load.state !== 'ready' || load.report.routes.length === 0) {
     return (
-      <h1 id="headline" className="headline">
-        {load.state === 'loading' ? 'Checking how services are running…' : 'How punctual were services?'}
-      </h1>
+      <div>
+        <p className="headline-kicker">South East Queensland · Network status</p>
+        <h1 id="headline" className="headline">
+          {load.state === 'loading' ? 'Reading timetable performance…' : 'No stops recorded'}
+        </h1>
+      </div>
     );
   }
 
   const { routes } = load.report;
   const observed = routes.reduce((sum, r) => sum + r.observedStops, 0);
   const onTime = routes.reduce((sum, r) => sum + r.onTimeStops, 0);
-  const when = isToday ? 'so far today' : `on ${formatDay(date)}`;
+  const rate = onTime / observed;
+  const band = rate >= 0.9 ? 'good' : rate >= 0.75 ? 'fair' : 'poor';
+  const when = isToday ? 'So far today' : formatDay(date);
 
   return (
     <div>
+      <p className="headline-kicker">{when} · {routes.length.toLocaleString('en-AU')} active routes</p>
       <h1 id="headline" className="headline">
-        On time at {percent(onTime / observed)} of stops {when}
+        <span className={`headline-figure rate-${band}`}>{percent(rate)}</span> on time
       </h1>
       <p className="headline-detail">
-        Across {routes.length.toLocaleString('en-AU')} routes and {observed.toLocaleString('en-AU')} stops served.
+        Measured across {observed.toLocaleString('en-AU')} completed stop arrivals.
       </p>
     </div>
   );
 }
 
-function RouteBoard({ report, date }: { report: DayReport; date: string }) {
+function RouteBoard({
+  report,
+  date,
+  mode,
+  onSelectMode,
+}: {
+  report: DayReport;
+  date: string;
+  mode: string;
+  onSelectMode: (mode: string) => void;
+}) {
   const [showAll, setShowAll] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
   const modes = ['all', 'bus', 'train', 'ferry', 'tram'];
-
-  // Mode and search live in the URL (?mode=train&q=66), like the date, so a shared link or a
-  // reload shows the same filtered board. replace keeps typing out of the browser history.
   const query = searchParams.get('q') ?? '';
-  const modeParam = searchParams.get('mode') ?? 'all';
-  const mode = modes.includes(modeParam) ? modeParam : 'all';
 
-  const updateParam = (key: string, value: string, empty: string) => {
+  const setQuery = (value: string) => {
     const next = new URLSearchParams(searchParams);
-    if (value === empty) next.delete(key);
-    else next.set(key, value);
+    if (value === '') next.delete('q');
+    else next.set('q', value);
     setSearchParams(next, { replace: true });
   };
-  const setQuery = (value: string) => updateParam('q', value, '');
-  const setMode = (value: string) => updateParam('mode', value, 'all');
 
   const cancelled = useMemo(
     () => new Map(report.cancellations.map((c) => [c.routeId, c.cancelledTrips])),
     [report.cancellations],
   );
 
-  // Keep the API's worst-first order, but move routes with too few observations to the end so a
-  // route seen at 2 stops can't top the board with a meaningless 0% or 50%.
   const ranked = [
     ...report.routes.filter((r) => r.observedStops >= MIN_RELIABLE_SAMPLE),
     ...report.routes.filter((r) => r.observedStops < MIN_RELIABLE_SAMPLE),
@@ -282,25 +414,24 @@ function RouteBoard({ report, date }: { report: DayReport; date: string }) {
   const getRouteLink = (routeId: string) => {
     const params = new URLSearchParams(searchParams);
     params.set('date', date);
-    // q and mode ride along so the route page's "Back to all routes" link restores the filtered board.
     return `/routes/${encodeURIComponent(routeId)}?${params.toString()}`;
   };
 
   return (
     <section className="board" aria-labelledby="board-title">
       <div className="board-head">
-        <div>
+        <div className="board-head-left">
           <h2 id="board-title">Routes, least punctual first</h2>
-          <div className="mode-filters" role="group" aria-label="Filter by transport mode">
+          <div className="mode-tabs" role="group" aria-label="Filter by transport mode">
             {modes.map((m) => (
               <button
                 key={m}
                 type="button"
-                className={`mode-btn ${mode === m ? 'active' : ''}`}
+                className={`mode-tab ${mode === m ? 'active' : ''}`}
                 aria-pressed={mode === m}
-                onClick={() => setMode(m)}
+                onClick={() => onSelectMode(m)}
               >
-                {m === 'all' ? 'All modes' : m.charAt(0).toUpperCase() + m.slice(1)}
+                {m === 'all' ? 'All' : m.charAt(0).toUpperCase() + m.slice(1)}
               </button>
             ))}
           </div>
@@ -309,7 +440,7 @@ function RouteBoard({ report, date }: { report: DayReport; date: string }) {
           <span className="visually-hidden">Find a route</span>
           <input
             type="search"
-            placeholder="Find by number or name"
+            placeholder="Filter route number or corridor"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -322,16 +453,16 @@ function RouteBoard({ report, date }: { report: DayReport; date: string }) {
             <tr>
               <th scope="col">Route</th>
               <th scope="col" className="col-rate">
-                On time (Observed)
+                On time
               </th>
               <th scope="col" className="num">
-                Average delay
+                Avg delay
               </th>
               <th scope="col" className="num">
                 Stops
               </th>
               <th scope="col" className="num">
-                Feed-reported cancellations
+                Cancellations
               </th>
             </tr>
           </thead>
@@ -380,23 +511,22 @@ function RouteRow({
 }) {
   const lowSample = route.observedStops < MIN_RELIABLE_SAMPLE;
   const band = lowSample ? 'muted' : route.onTimeRate >= 0.9 ? 'good' : route.onTimeRate >= 0.75 ? 'fair' : 'poor';
+  const slug = modeSlug(route.routeType);
 
-  // The route link in the first cell is the keyboard and screen-reader target; clicking anywhere
-  // else on the row is a mouse convenience. Keeping the row a plain <tr> preserves table semantics.
   return (
     <tr className="clickable-row" onClick={onRowClick}>
       <th scope="row">
         <Link to={link} className="route-cell-link" onClick={(e) => e.stopPropagation()}>
-          <div className="route-cell">
-            <div className="route-header-line">
-              <span className="route-badge">{route.routeShortName || route.routeId}</span>
-              <span className="route-mode">{formatMode(route.routeType)}</span>
-            </div>
-            {route.routeLongName && (
-              <span className="route-name" title={route.routeLongName}>
-                {route.routeLongName}
+          <div className="route-inline">
+            <span className={`route-badge badge-${slug}`}>
+              {route.routeShortName || route.routeId}
+            </span>
+            <div className="route-meta-col">
+              <span className="route-name" title={route.routeLongName || route.routeId}>
+                {route.routeLongName || route.routeId}
               </span>
-            )}
+              <span className="route-mode-text">{formatMode(route.routeType)}</span>
+            </div>
           </div>
         </Link>
       </th>
@@ -407,8 +537,11 @@ function RouteRow({
           </span>
           <div className="rate-figures">
             <span className="rate-value">{percent(route.onTimeRate)}</span>
-            <span className="rate-sample-count">({route.observedStops.toLocaleString('en-AU')} stops)</span>
-            {lowSample && <span className="rate-low-sample-label">Low sample</span>}
+            <span className="rate-sample-count">
+              {lowSample
+                ? `low sample · ${route.observedStops}`
+                : `${route.observedStops.toLocaleString('en-AU')} stops`}
+            </span>
           </div>
         </div>
       </td>
@@ -439,6 +572,10 @@ function formatDelay(seconds: number): string {
   if (Math.abs(minutes) < 0.1) return 'on time';
   const sign = minutes > 0 ? '+' : '−';
   return `${sign}${Math.abs(minutes).toFixed(1)} min`;
+}
+
+function formatShortDate(isoDate: string): string {
+  return new Date(`${isoDate}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
 }
 
 function formatDay(isoDate: string): string {
