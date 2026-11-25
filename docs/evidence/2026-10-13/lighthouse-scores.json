@@ -1,0 +1,16 @@
+[
+  {
+    "url": "http://127.0.0.1:5174/?date=2026-10-12",
+    "version": "13.5.0",
+    "fetchTime": "2026-10-13T02:25:55.3Z",
+    "accessibilityScore": 100,
+    "formFactor": "mobile"
+  },
+  {
+    "url": "http://127.0.0.1:5174/routes/196-5146?date=2026-10-12",
+    "version": "13.5.0",
+    "fetchTime": "2026-10-13T02:35:15.689Z",
+    "accessibilityScore": 100,
+    "formFactor": "mobile"
+  }
+]

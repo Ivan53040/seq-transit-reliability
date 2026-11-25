@@ -116,7 +116,7 @@ export function RoutePage() {
           <section className="stops-section" aria-labelledby="stops-heading">
             <div className="stops-header">
               <div>
-                <h3 id="stops-heading">Bottleneck Stops on this Route</h3>
+                <h2 id="stops-heading">Bottleneck Stops on this Route</h2>
                 <p className="stops-subtitle">
                   Stops with the lowest on-time rates on {formatDay(date)}, worst first
                 </p>
@@ -210,7 +210,7 @@ function RouteKpiCards({ summary }: { summary: RouteDetailReport['summary'] }) {
       </div>
 
       <div className="kpi-card">
-        <span className="kpi-label">Cancelled Trips</span>
+        <span className="kpi-label">Feed-Reported Cancellations</span>
         <div className="kpi-value">
           {summary.cancelledTrips === 0 ? (
             <span className="muted">0</span>
@@ -218,7 +218,7 @@ function RouteKpiCards({ summary }: { summary: RouteDetailReport['summary'] }) {
             summary.cancelledTrips
           )}
         </div>
-        <span className="kpi-hint">Recorded {period}</span>
+        <span className="kpi-hint">Recorded {period}; zero does not confirm all trips ran</span>
       </div>
     </section>
   );

@@ -1,0 +1,41 @@
+# Raw feed audit: 2026-10-12 (Australia/Brisbane)
+Counts below are sightings across snapshots, not distinct trips or served stops.
+Files: 2866; invalid protobuf/header/key: 0
+Total bytes: 3414522949; average bytes/file: 1191389
+First: 2026-10-12T00:00:10.0000000+10:00; last: 2026-10-12T23:59:30.0000000+10:00
+Maximum gap including midnight boundaries: 70s; mean internal gap: 30.1s
+Full-day coverage (all hours, gaps <= 120s, no corrupt files): True
+Trip sightings: 3710228; missing/invalid start_date: 0; missing vehicle_id: 153732
+Stop sightings: 66367580; missing stop_sequence: 0; SKIPPED: 45854; NO_DATA: 3
+Trips with every reported stop SKIPPED: 8; stops with time but no delay: 0
+Extracted observations before folding: 66321723
+Added: 19166
+Canceled: 2
+Replacement: 138263
+Scheduled: 3552797
+Cancellation 20261012/39241554-QR 26_27-44306-DY63: 2 sightings; last cancelled 2026-10-12T08:26:40.0000000+00:00; later running 2026-10-12T08:34:00.0000000+00:00
+Hour | snapshot files
+00 | 120
+01 | 120
+02 | 120
+03 | 120
+04 | 120
+05 | 118
+06 | 119
+07 | 120
+08 | 120
+09 | 119
+10 | 120
+11 | 120
+12 | 120
+13 | 119
+14 | 120
+15 | 117
+16 | 119
+17 | 118
+18 | 119
+19 | 120
+20 | 120
+21 | 120
+22 | 118
+23 | 120

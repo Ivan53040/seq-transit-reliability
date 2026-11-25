@@ -75,9 +75,9 @@ export function DailyTrendChart({ data, fromDate, toDate }: DailyTrendChartProps
 
   return (
     <div className="chart-wrapper" aria-labelledby="daily-chart-heading">
-      <h3 id="daily-chart-heading" className="chart-title">
+      <h2 id="daily-chart-heading" className="chart-title">
         7-Day On-Time Trend
-      </h3>
+      </h2>
       <p className="chart-subtitle">Daily percentage of stops served on schedule</p>
 
       <svg

@@ -1,6 +1,7 @@
 using SeqTransit.Core.Gtfs;
 using SeqTransit.Core.Ingestion;
 using SeqTransit.Data;
+using SeqTransit.Local;
 
 // Run the pipeline locally, no AWS needed:
 //
@@ -9,6 +10,7 @@ using SeqTransit.Data;
 //   dotnet run --project src/SeqTransit.Local -- run     # fetch every minute, load every 5 minutes (Ctrl+C to stop)
 //
 //   dotnet run --project src/SeqTransit.Local -- load-gtfs [zip]  # replace the static timetable
+//   dotnet run --project src/SeqTransit.Local -- audit-feed YYYY-MM-DD  # read-only full-day audit
 //
 // Settings (environment variables): SNAPSHOT_DIR (default .local-snapshots), FEED_URL, and either
 // DB_CONNECTION_STRING (default: the docker-compose database) or DB_HOST + DB_USER + AWS_REGION
@@ -33,6 +35,17 @@ Console.CancelKeyPress += (_, e) =>
     cancel.Cancel();
 };
 
+// A raw-feed audit needs no database settings or credentials.
+if (command == "audit-feed")
+{
+    if (!DateOnly.TryParseExact(args.ElementAtOrDefault(1), "yyyy-MM-dd", out var auditDate))
+    {
+        Console.Error.WriteLine("Use audit-feed YYYY-MM-DD (Brisbane calendar date).");
+        return 1;
+    }
+    return await FeedAudit.WriteAsync(snapshotDirectory, auditDate, cancel.Token);
+}
+
 var store = new FileSnapshotStore(snapshotDirectory);
 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
 var fetcher = new SnapshotFetcher(http, store, TimeProvider.System);
@@ -51,7 +64,22 @@ try
             await LoadAll();
             break;
         case "run":
-            await RunContinuously();
+            Directory.CreateDirectory(snapshotDirectory);
+            FileStream collectorLock;
+            try
+            {
+                collectorLock = new FileStream(Path.Combine(snapshotDirectory, ".collector.lock"),
+                    FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException ex)
+            {
+                Console.Error.WriteLine($"Cannot acquire collector lock; another collector may be running: {ex.Message}");
+                return 1;
+            }
+            await using (collectorLock)
+            {
+                await RunContinuously();
+            }
             break;
         case "load-gtfs":
             var zipPath = args.ElementAtOrDefault(1) ?? ".gtfs-cache/SEQ_GTFS.zip";
@@ -61,7 +89,7 @@ try
             }
             break;
         default:
-            Console.Error.WriteLine($"Unknown command '{command}'. Use fetch, load, run or load-gtfs.");
+            Console.Error.WriteLine($"Unknown command '{command}'. Use fetch, load, run, load-gtfs or audit-feed.");
             return 1;
     }
 }

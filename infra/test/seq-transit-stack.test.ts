@@ -102,6 +102,12 @@ test('alarms and a monthly budget email the alert address', () => {
   });
 });
 
+test('API alarm detects HTTP 5xx responses even when the Lambda invocation succeeds', () => {
+  template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+    Namespace: 'AWS/ApiGateway', MetricName: '5xx', Statistic: 'Sum', Period: 300, Threshold: 5,
+  });
+});
+
 test('GitHub role trusts only the main branch of the configured repository', () => {
   const github = Template.fromStack(new GitHubDeployStack(new App(), 'GitHub', { env, config }));
   github.hasResourceProperties('AWS::IAM::Role', {

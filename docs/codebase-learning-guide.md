@@ -417,6 +417,63 @@
 
 ---
 
+## Phase 6：AWS 無伺服器雲端部署與實戰驗證 (AWS Serverless Deployment & Live Operations)
+
+在 Phase 6 中，我們將整套系統正式部署至 AWS 雪梨節點（`ap-southeast-2`），從本機 Docker 邁向具備公開網址、零密碼 IAM 認證與自動休眠成本控管的生產級無伺服器架構。
+
+### 1. 多帳號組織與新版 AWS CLI 認證 (`aws login` + Express Mode)
+* **AWS 多帳號隔離最佳實踐**：
+  * 系統部署在專屬的工作負載帳號（`Moonshot Mode` / `183255892601`），而非組織管理帳號（Management Account）或身分管理帳號（Identity Delegated Admin），確保權限與帳單邊界清晰。
+* **無永久金鑰設計**：
+  * 使用 AWS CLI v2.42 的 `aws login --remote` 直接透過瀏覽器 Console 工作階段簽發短期動態憑證，本機完全不存放任何永久性的 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`。
+  * 當 .NET SDK (`SeqTransit.Migrator` / `SeqTransit.Local`) 需要使用這些短期憑證產生 RDS IAM Token 時，透過 `aws configure export-credentials --format powershell` 僅將短期 Token 暫時載入單次終端機記憶體中，不寫入任何設定檔。
+
+---
+
+### 2. Aurora PostgreSQL Express 與自動休眠成本架構
+* **為什麼選 Aurora Express Configuration？**
+  * 透過 `scripts/create-database.ps1` 建立的 Aurora PostgreSQL 17.9 叢集啟用了 `VPCNetworkingEnabled: false` 與 `InternetAccessGatewayEnabled: true`。
+  * 外部連線強制走 TLS 加密（`SslMode=VerifyFull`）加上每 15 分鐘過期的 RDS IAM Auth Token，免去了建立 VPC 與 NAT Gateway（每月固定至少 USD 32+）的費用。
+* **Scale-to-Zero 自動暫停**：
+  * 設定 `MinCapacity=0, MaxCapacity=2, SecondsUntilAutoPause=300`：在 30 分鐘一次的 Load 批次之間，若無查詢流量，資料庫會在閒置 5 分鐘後自動縮容至 **0 ACU** 休眠，大幅壓低每月的運算費用。
+* **別忘了靜態班表！**
+  * 除了執行 `SeqTransit.Migrator` 套用全部 6 個 Migration 並建立最小權限角色（`seq_ingest` / `seq_api`）之外，也必須用 `load-gtfs` 把 15 萬筆 `SEQ_GTFS.zip` 靜態路線與站點資料匯入 Aurora，線上的儀表板才會顯示真實路線編號與名稱。
+
+---
+
+### 3. CloudFront 邊緣路由與 API 安全防線
+* **同一網域雙路由**：
+  * `/*` → 指向私有 S3 靜態網站（透過 Origin Access Control 存取，S3 封鎖全部公開存取），並以 `SpaRewriteFunction` 將前端路由（如 `/routes/196-5146`）改寫回 `/index.html`。
+  * `/api/*` → 指向 API Gateway HTTP API（設定限流 10 req/s、burst 20）與 `ApiFunction`（.NET 10 ARM64 Graviton Lambda），且不會將 API 的真實 `404` 誤改寫成 HTML 頁面。
+* **四重自動化可觀測性與成本防護**：
+  * 4 個 CloudWatch Alarms（`NoSnapshotsAlarm`、`FeedStaleAlarm`、`LoadErrorsAlarm`、`ApiErrorsAlarm`）全數綁定 SNS Email 告警。
+  * 搭配 AWS Budgets 每月預算通知，確保任何異常流量或管線中斷都能第一時間收到警示。
+
+---
+
+## Phase 7：GitHub Actions 零金鑰自動部署 (OIDC Federation & CI/CD)
+
+在 Phase 7 中，我們導入了現代雲端安全標準的 **GitHub OIDC（OpenID Connect）聯邦認證**，讓每次合併至 `main` 分支時，GitHub Actions 自動執行測試、資料庫遷移與 CDK 部署，**全程不在 GitHub Secrets 裡存放任何永久 AWS Access Key**。
+
+### 1. GitHub OIDC Token 如何換取臨時 AWS 憑證？
+* **傳統作法的風險**：建立 IAM User、產生一組永久有效的 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` 塞進 GitHub Secrets。一旦外洩或忘記輪替，攻擊者就擁有長期權限。
+* **OIDC 零金鑰運作流程**：
+  1. 在 AWS 端透過 `SeqTransitGitHubStack` 建立 GitHub 的 OIDC Identity Provider（`token.actions.githubusercontent.com`）與專屬的部署角色 `DeployRole`。
+  2. 當 GitHub Actions 的 `deploy` Job 啟動時（需宣告 `permissions: id-token: write`），GitHub 會即時簽發一張有時效性的 JWT（OIDC Token），內含 `aud`（`sts.amazonaws.com`）與 `sub`（`repo:Ivan53040/seq-transit-reliability:ref:refs/heads/main`）。
+  3. `aws-actions/configure-aws-credentials@v4` 拿這張 JWT 呼叫 AWS STS 的 `AssumeRoleWithWebIdentity`。
+  4. AWS 驗證簽章與 Trust Policy 條件完全吻合後，發放一張**僅存活 1 小時的短期臨時憑證**供該次部署使用。
+
+### 2. 為什麼 Trust Policy 嚴格鎖定單一 Repo 的 `main` 分支？
+* 在 `infra/lib/github-deploy-stack.ts` 中，Trust Policy 同時鎖定：
+  * `token.actions.githubusercontent.com:aud == "sts.amazonaws.com"`
+  * `token.actions.githubusercontent.com:sub == "repo:Ivan53040/seq-transit-reliability:ref:refs/heads/main"`
+* **安全意義**：就算是同一個 Repo 的 Pull Request（包括外部人員開的 Fork PR）或其他開發分支，都**無法**假冒身分 Assume 部署角色；唯有通過 CI 檢查並正式合併進 `main` 分支的程式碼，才能取得部署權限。
+
+### 3. 環境變數與成本設定防回歸
+* 因為 `infra/cdk.context.json` 在 `.gitignore` 中不會進版控，CI/CD 部署時所有環境參數（`SEQ_DB_HOST`、`SEQ_DB_CLUSTER_RESOURCE_ID`、`SEQ_ALERT_EMAIL`、`SEQ_MONTHLY_BUDGET_USD`、`SEQ_LOAD_INTERVAL_MINUTES`）皆透過 GitHub Repository **Variables** 注入，確保每次自動部署都精準保留 `60` 分鐘批次載入與 `$20` 預算設定，不會意外退回預設值。
+
+---
+
 ## 面試直球對決 (Interview Defense Q&A)
 
 當面試官翻看你的程式碼時，最容易問的五個高難度問題：

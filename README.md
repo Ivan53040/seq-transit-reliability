@@ -1,5 +1,7 @@
 # SEQ Transit Reliability
 
+[![CI](https://github.com/Ivan53040/seq-transit-reliability/actions/workflows/ci.yml/badge.svg)](https://github.com/Ivan53040/seq-transit-reliability/actions/workflows/ci.yml)
+
 How punctual is public transport in South East Queensland, route by route? This project records
 Translink's real-time feed every minute, works out how late each service actually was at every stop,
 and publishes the results as a small dashboard and API.
@@ -8,10 +10,16 @@ Built with C# / .NET 10, ASP.NET Core, EF Core, PostgreSQL, React + TypeScript, 
 (Lambda, EventBridge Scheduler, S3, Aurora Serverless, API Gateway, CloudFront), deployed with the AWS CDK
 and GitHub Actions.
 
-> **Status:** Active development. Running locally: live Translink GTFS-RT ingestion, static GTFS timetable
-> loading, an analytics API (percentiles, hourly and per-mode views) and a React dashboard with a route detail
-> page. Still to do: a full weekday of collected data and its quality checks, query timings on a week of data,
-> and the AWS deployment.
+> **Status (25 Nov 2026):** Live on AWS (`ap-southeast-2`) at [https://d2ckfcry48m74h.cloudfront.net](https://d2ckfcry48m74h.cloudfront.net)
+> with automatic GitHub Actions OIDC deployment enabled. All 4 CloudWatch alarms are `OK`, static GTFS timetable
+> is loaded in Aurora PostgreSQL Serverless (0–2 ACU, auto-pause 300s, 60-min batch load interval), and live
+> Translink snapshots are captured every minute. Pending: 48-hour Cost Explorer / Credits & auto-pause capacity verification.
+
+[Validation and evidence](docs/validation-2026-10-13.md) · [AWS deployment checklist](docs/aws-deployment.md) ·
+[Case study draft](docs/case-study.md)
+
+![Route board with real data from 12 October](docs/screenshots/board.jpg)
+![Route detail with real data from 12 October](docs/screenshots/route.jpg)
 
 ## How it works
 
@@ -36,7 +44,9 @@ flowchart LR
 4. **Dashboard** shows the least punctual routes first.
 
 A stop counts once the vehicle has passed it. On time means between 1 minute early and 5 minutes late
-(configurable in `OnTime` settings).
+(configurable in `OnTime` settings). This is a project stop-level convention, not Translink's official
+performance measure. Cancellation counts reflect only explicit feed reports after reinstatements;
+zero does not confirm that all scheduled services ran.
 
 ## Design decisions
 
@@ -101,6 +111,19 @@ npm run dev
 
 On macOS or Linux, set the variable with `export DB_CONNECTION_STRING=...` instead.
 To work on the dashboard without any data, open <http://localhost:5173/?sample>.
+Only one `run` process may own a snapshot directory; a second start is rejected. Stop the collector before
+rebuilding its active output directory, or use `--artifacts-path artifacts/validation` for isolated builds/tests.
+
+To reproduce the full-day quality checks and query plans: `./scripts/audit-local.ps1 -Date 2026-10-12`.
+Reports are written to `artifacts/audit`; the audit reads the snapshots and database without modifying them.
+The current background collector records its PID and log paths in `artifacts/collector/process.json`.
+To inspect its output:
+
+```powershell
+$collector = Get-Content artifacts/collector/process.json -Raw | ConvertFrom-Json
+Get-Content -LiteralPath $collector.stdout -Tail 10
+Get-Content -LiteralPath $collector.stderr -Tail 10
+```
 
 ## Tests
 
@@ -132,6 +155,9 @@ $env:DB_CONNECTION_STRING = $null
 $env:DB_HOST = "<dbHost>"; $env:DB_USER = "postgres"; $env:AWS_REGION = "ap-southeast-2"
 dotnet run --project src/SeqTransit.Migrator
 
+# 3b. Load the timetable into Aurora too (the local Docker tables are separate)
+dotnet run --project src/SeqTransit.Local -- load-gtfs .gtfs-cache/SEQ_GTFS.zip
+
 # 4. Build and deploy
 ./scripts/publish.ps1
 cd infra
@@ -140,6 +166,7 @@ npm run deploy
 
 The deploy prints `SiteUrl` (the dashboard) and `ApiUrl`. If you set `alertEmail`, confirm the subscription
 email from AWS so alarms and budget alerts reach you.
+The OpenAPI document is available at `<SiteUrl>/api/openapi/v1.json`.
 
 ### Deploy from GitHub Actions
 
@@ -160,14 +187,17 @@ current prices for `ap-southeast-2`, and keep the budget alert on.
 To remove everything: `cd infra; npm run destroy`, then delete the cluster with
 `aws rds delete-db-cluster --db-cluster-identifier seq-transit --skip-final-snapshot`.
 
-## Roadmap
+## Built and next steps
 
-- [ ] First run against the live feed: check feed size, how often the timestamp changes, and whether trips
-      without a tracked vehicle report a delay of zero (they would inflate on-time rates).
-- [ ] Load static GTFS (routes, stops, timetables) so the dashboard shows route names and stop names.
-- [ ] Peak-hour and worst-stop views; charts for daily trends.
-- [ ] Weekly plain-English summary with Amazon Bedrock.
-- [ ] ReadyToRun builds for faster Lambda cold starts; OpenAPI document for the API.
+- [x] Full weekday of GTFS-RT data, documented identifiers/cancellation checks and tested quality rules.
+- [x] Atomic static GTFS loading with route/stop names and transport modes.
+- [x] Route summaries, daily/hourly trends, worst stops, per-mode metrics and OpenAPI.
+- [x] Searchable dashboard, date/filter URLs, sample mode, phone/dark-mode checks and accessibility scores of 100.
+- [x] Linux ARM64 Lambda packages, tested CDK infrastructure and offline synthesis of both real entrypoints.
+- [ ] Repeat query measurements after a complete week; add aggregates only if measurements justify them.
+- [ ] Deploy to AWS, confirm live data, alarms, actual auto-pause and costs, then enable GitHub OIDC deployment.
+- [ ] Publish the completed case study/demo and add verified cloud numbers to the portfolio.
+- [ ] Optional later: Bedrock weekly summaries and measured cold-start improvements.
 
 ## Data and licences
 

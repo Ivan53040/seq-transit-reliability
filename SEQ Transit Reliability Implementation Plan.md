@@ -2,14 +2,33 @@
 
 Oct 11, 2026 · @Ivan
 
+## Verified progress — 13 October 2026
+
+Phase 2's complete weekday is now verified: Monday 12 October has 24-hour coverage, 2,866 distinct raw
+snapshots and 540,225 stored trip-stop rows across 499 routes. The quality rules have regression tests.
+Phase 5's screenshots, phone/dark-mode and keyboard checks are complete, with Lighthouse accessibility
+100 on both pages. The complete solution builds with zero warnings and all 68 .NET tests and 10 CDK tests pass.
+
+Phase 4's one-week-volume performance check remains pending; current local SQL plans take about 9–191 ms.
+Phase 6 packages and both real CDK entrypoints have been validated offline, but Ivan has not yet configured
+AWS. Phase 6 live deployment/cost monitoring and Phase 7 OIDC deployment remain pending. Phase 8 is optional
+and deferred until required phases pass. Phase 9 has an evidence-based case study draft; live metrics, video,
+public repository and CV/LinkedIn publication remain pending. Personal learning/interview tasks are not checked
+off by automated verification.
+
+See [the measured validation report](docs/validation-2026-10-13.md),
+[the AWS deployment checklist](docs/aws-deployment.md) and [case study draft](docs/case-study.md).
+
 ## How to use this plan
 
 Work through nine phases over about four weeks to turn the starter in `Sideproject\seq-transit-reliability` into a live, tested project you can show and explain. Tick each box as you finish it.
 
 **Where the project stands today**
 
-- Done in the starter: feed parsing, the fetch and load workflows, the database schema, the API, a basic dashboard, the AWS stack, CI, and tests for all of them.
-- Not done yet: the first real build on your PC, real data, route and stop names, deeper analysis, charts, the AWS deployment, and the portfolio write-up.
+- Implemented and locally verified: ingestion, migrations, static GTFS names, analysis API, dashboard/charts,
+  quality rules, tests, screenshots, deployment packages and offline AWS stack synthesis.
+- Remaining acceptance gates: a complete week's query measurements, AWS setup/live deployment and measured
+  costs, GitHub deployment/branch protection, portfolio publication and personal explanation/interview practice.
 
 **How each phase is laid out**
 
@@ -28,12 +47,12 @@ Week 1 decides the rest: if the real data can't be trusted, the dashboard and th
 
 Goal: every tool installed and the project on GitHub, with CI running. About half a day.
 
-- [ ] Install the .NET 10 SDK. Check: `dotnet --list-sdks` shows a 10.0 version.
-- [ ] Install Node.js 22 LTS or later. Check: `node -v`.
+- [x] Install the .NET 10 SDK. Verified SDK 10.0.401.
+- [x] Install Node.js 22 LTS or later. Verified Node 24.15.0.
 - [ ] Install Docker Desktop (WSL 2 backend) and start it. Check: `docker run --rm hello-world`.
 - [ ] Install Git and the latest AWS CLI v2. Check: `aws --version`.
 - [ ] Install an editor: Visual Studio, Rider, or VS Code with the C# Dev Kit extension.
-- [ ] Move `docs\github-actions-ci.yml` to `.github\workflows\ci.yml` (the copy tool couldn't write there).
+- [x] CI workflow exists at `.github\workflows\ci.yml`; the existing main CI runs are green.
 - [ ] Create the repository and push it:
 
 ```powershell
@@ -56,9 +75,9 @@ Goal: everything builds and passes on your PC, and you can explain every file. A
 
 **Build and test**
 
-- [ ] `dotnet build` from the repo root. This is the first build with the real NuGet packages; if anything fails in Data, Ingestion or Api, paste the errors to Claude.
+- [x] Build the complete solution. `dotnet build SeqTransit.slnx -c Release --artifacts-path artifacts/validation` passes with zero warnings/errors.
 - [ ] `dotnet test --filter "Category!=Integration"` (no Docker needed).
-- [ ] With Docker running: `dotnet test` (adds the PostgreSQL integration tests).
+- [x] With Docker running: full .NET test suite passes (68 tests), including PostgreSQL integration tests.
 - [ ] `cd infra; npm ci; npm run build; npm test`
 - [ ] `cd web; npm install; npm run dev`, then open http://localhost:5173/?sample
 - [ ] Push the fixes. CI should now go green.
@@ -99,18 +118,18 @@ Goal: at least one full weekday of real Translink data on your PC, and written r
 
 ```powershell
 docker compose up -d
-$env:DB_CONNECTION_STRING = "Host=localhost;Database=seq_transit;Username=postgres;Password=postgres"
+$env:DB_CONNECTION_STRING = "Host=localhost;Port=5433;Database=seq_transit;Username=postgres;Password=postgres"
 dotnet run --project src/SeqTransit.Migrator
 ```
 
-- [ ] Run `dotnet run --project src/SeqTransit.Local -- run` for 24 hours on a weekday, so you capture both peaks (about 7 to 9 am and 3 to 6 pm). Keep the PC awake.
+- [x] Collect a complete weekday including both peaks. Monday 12 October passes the raw and database coverage checks.
 - [ ] Open a SQL shell with `docker compose exec db psql -U postgres -d seq_transit` for the checks below.
 
 **Learn the feed's facts** (write each answer in `docs/decisions.md`)
 
-- [ ] Size of one snapshot: `Get-ChildItem .local-snapshots -Recurse -File | Measure-Object Length -Average -Sum`. This decides S3 cost and whether to compress snapshots.
-- [ ] How often the feed changes: count snapshot files per hour. 60 means a new version every minute; fewer means the feed updates more slowly.
-- [ ] Whether trips include `start_date`, `stop_sequence` and a vehicle id. The skipped-update counts in the runner's output hint at this.
+- [x] Measure snapshot size: Monday averages 1,191,389 bytes per file, 3.41 GB total; decision 13 records the measurement.
+- [x] Measure captured version cadence: 30.1 seconds average with two collectors, now reduced to one; maximum gap 70 seconds.
+- [x] Audit identifiers and relationships across the complete day using `audit-feed YYYY-MM-DD`; see decision 13.
 
 **Check the data before trusting any number**
 
@@ -150,9 +169,10 @@ GROUP BY 1
 ORDER BY 1;
 ```
 
-- [ ] Decide your data rules from the results (for example: exclude untracked trips, drop delays beyond an hour) and add them to `docs/decisions.md` as decision 9.
-- [ ] Apply the rules in `ReliabilityQueries.PassedStops` and add an integration test for each one.
-- [ ] Look up how Translink defines "on time" in its published performance reports, and set the `OnTime` window in `appsettings.json` to match so your numbers are comparable.
+- [x] Record the data rules: keep untracked trips and exclude delays beyond ±1 hour (decisions 9 and 13).
+- [x] Apply rules in the trusted view and PassedStops, with tests for missing times/delays, exact boundaries and untracked trips.
+- [x] Check Translink's published definition. Keep the common project window and disclose the different
+  denominator/mode thresholds; official comparability cannot be achieved by changing one setting alone.
 
 **Done when:** you have 24 hours of data, the feed facts are written down, and every data rule has a test.
 
@@ -163,8 +183,8 @@ ORDER BY 1;
 Goal: the dashboard shows real route numbers, names and modes (bus, train, ferry, tram) instead of raw ids. About 3 days. The real-time feed only carries ids; the names live in Translink's static timetable ([SEQ GTFS on the Queensland Open Data Portal](https://www.data.qld.gov.au/dataset/general-transit-feed-specification-gtfs-translink/resource/e43b6b9f-fc2b-4630-a7c9-86dd5483552b)).
 
 - [ ] Download the SEQ GTFS zip and look inside. Note the row counts of `routes.txt`, `stops.txt`, `trips.txt` and `stop_times.txt` (the last one is large).
-- [ ] Check that route ids in your real-time data match `routes.txt`. Write down any that don't.
-- [ ] Add `db/migrations/0003_static_gtfs.sql` with tables for routes (id, short name, long name, route type), stops (id, name, latitude, longitude) and trips (id, route id, headsign, direction). Grant SELECT to `seq_api`. Never edit 0001 or 0002: the migrator refuses changed files.
+- [x] Check route IDs: every Monday observation matches static GTFS (zero unmatched IDs).
+- [x] Add and apply static GTFS migration 0003 with route/stop/trip tables and API SELECT grants; applied migrations are unchanged.
 - [ ] In Core, write a reader that opens the zip with `System.IO.Compression.ZipArchive` and parses the CSV files. Add `CsvHelper` to `Directory.Packages.props` rather than splitting lines yourself: GTFS fields can contain quoted commas.
 - [ ] In Data, write a loader that bulk-copies into staging tables with Npgsql's binary COPY (`BeginBinaryImportAsync`), then replaces the live tables in one transaction, so the API never sees a half-loaded timetable.
 - [ ] Add a command: `dotnet run --project src/SeqTransit.Local -- load-gtfs <path to zip>`.
@@ -209,15 +229,15 @@ Goal: the API answers the questions a commuter or a reviewer would actually ask,
 
 Goal: someone new can find out which routes are worst at peak time in two clicks. About 3 days.
 
-- [ ] Add a route page (`/routes/:routeId`) with React Router. Clicking a row on the board opens it.
+- [x] Add a route page (`/routes/:routeId`) with React Router; browser and keyboard navigation verified.
 - [ ] On the route page: a line chart of the daily on-time rate (Phase 4 `?days=`), a bar chart by hour of day, and a table of its worst stops.
 - [ ] Pick one chart library and stick to it (Recharts is the common choice), or draw simple SVG yourself. Every chart also needs its numbers available as text for screen readers.
 - [ ] Add the mode filter and name search from Phase 3 to the main board.
 - [ ] Put the date in the URL (`?date=2026-10-12`) so a link shows the same view.
 - [ ] Show the sample size next to every rate, matching the API.
-- [ ] Check on a phone-sized window, in dark mode, and using only the keyboard. Run Lighthouse in Chrome DevTools and fix anything under 90 for accessibility.
-- [ ] Keep `?sample` working with sample data for the new views, so you can work on layout without the API.
-- [ ] Take two screenshots (board and route page) for the README.
+- [x] Verify 390×844 phone layout, dark appearance and keyboard navigation. Lighthouse mobile accessibility is 100 for both pages.
+- [x] Keep `?sample` working for the board and route charts; browser verified.
+- [x] Save real-data board/route screenshots and add them to the README.
 
 **Done when:** board → route → peak-hour chart works with real data, on a phone and with the keyboard.
 
@@ -290,7 +310,7 @@ Goal: every pull request is tested, and merging to `main` deploys, with no AWS k
 Goal: every Monday morning, a short plain-English summary of last week's reliability, written by a model from numbers the database computed. About 2 days. It uses your AI Practitioner knowledge, and the guardrail is the part worth showing.
 
 - [ ] In the Bedrock console, pick a text model available in `ap-southeast-2` and enable access if asked.
-- [ ] Add `db/migrations/0004_weekly_summary.sql`: week start, summary text, the input figures as JSON, model id, created time.
+- [ ] Add a new unused migration (currently `0007_weekly_summary.sql`): week start, summary text, the input figures as JSON, model id, created time. Never reuse applied 0004–0006.
 - [ ] Write a new Lambda function that runs Mondays at 7 am Brisbane time (EventBridge Scheduler cron with time zone `Australia/Brisbane`).
 - [ ] Compute every figure in SQL first: best and worst routes, change from the previous week, worst hour. The model only writes sentences about figures it's given; it never calculates.
 - [ ] Call the Bedrock Converse API (`AWSSDK.BedrockRuntime`, `ConverseAsync`) with the figures and a fixed instruction to use only those numbers.

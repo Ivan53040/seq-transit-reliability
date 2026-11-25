@@ -31,6 +31,8 @@ var app = builder.Build();
 app.UseExceptionHandler();
 app.UseCors();
 app.MapOpenApi();
+// CloudFront forwards /api/* to API Gateway; expose the document on that behaviour too.
+app.MapOpenApi("/api/openapi/{documentName}.json");
 app.MapReliabilityEndpoints();
 
 app.Run();

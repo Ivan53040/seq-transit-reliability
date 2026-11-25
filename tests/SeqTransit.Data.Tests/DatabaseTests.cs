@@ -142,6 +142,45 @@ public sealed class DatabaseTests(PostgresFixture database) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PassedStops_retains_untracked_trips_and_falls_back_to_departure_delay()
+    {
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(Batch(T0, [
+            Observation(1, delay: 60, feedAt: T0, eventTime: T0.AddMinutes(-5)) with
+            { VehicleId = null, ArrivalDelaySeconds = null, DepartureDelaySeconds = 60 },
+            Observation(2, delay: 400, feedAt: T0, eventTime: T0.AddMinutes(-5)) with { VehicleId = null },
+        ]), CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var route = Assert.Single(await new ReliabilityQueries(db)
+            .OnTimeByRouteAsync(Day, OnTimePolicy.Default, T0, CancellationToken.None));
+        Assert.Equal(2, route.ObservedStops);
+        Assert.Equal(1, route.OnTimeStops);
+        Assert.Equal(230, route.AverageDelaySeconds);
+    }
+
+    [Fact]
+    public async Task PassedStops_requires_time_and_delay_and_includes_one_hour_boundaries()
+    {
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(Batch(T0, [
+            Observation(1, delay: -3600, feedAt: T0, eventTime: T0.AddMinutes(-5)),
+            Observation(2, delay: 3600, feedAt: T0, eventTime: T0.AddMinutes(-5)),
+            Observation(3, delay: -3601, feedAt: T0, eventTime: T0.AddMinutes(-5)),
+            Observation(4, delay: 3601, feedAt: T0, eventTime: T0.AddMinutes(-5)),
+            Observation(5, delay: 0, feedAt: T0) with { EventTime = null },
+            Observation(6, delay: 0, feedAt: T0, eventTime: T0.AddMinutes(-5)) with { ArrivalDelaySeconds = null },
+        ]), CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var route = Assert.Single(await new ReliabilityQueries(db)
+            .OnTimeByRouteAsync(Day, OnTimePolicy.Default, T0, CancellationToken.None));
+        Assert.Equal(2, route.ObservedStops);
+        Assert.Equal(0, route.OnTimeStops);
+        Assert.Equal(0, route.AverageDelaySeconds);
+    }
+
+    [Fact]
     public async Task StopsByRouteAsync_returns_performance_per_stop()
     {
         var writer = new ObservationWriter(database.DataSource);

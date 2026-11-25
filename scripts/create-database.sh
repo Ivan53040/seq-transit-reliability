@@ -17,7 +17,7 @@ echo "Waiting for the cluster to become available..."
 aws rds wait db-cluster-available --db-cluster-identifier "$CLUSTER_ID" --region "$REGION"
 
 # Let the database pause after 5 idle minutes and cap its size. If your engine version
-# does not support pausing (minimum capacity 0), change MinCapacity to 0.5.
+# does not support pausing (minimum capacity 0), stop and review the running cost before proceeding.
 aws rds modify-db-cluster \
   --db-cluster-identifier "$CLUSTER_ID" \
   --serverless-v2-scaling-configuration MinCapacity=0,MaxCapacity=2,SecondsUntilAutoPause=300 \

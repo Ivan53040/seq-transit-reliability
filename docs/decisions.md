@@ -138,3 +138,30 @@ the whole day.
 
 **Known gap.** Like decision 3, this assumes snapshots are loaded roughly in order: a cancellation loaded in a
 later batch than a newer "running" sighting would be stored again. The watermark makes that rare.
+
+## 13. Full-weekday validation supersedes the preliminary feed sample
+
+**Evidence.** The complete Monday 12 October 2026 contains 2,866 distinct raw feed versions, 3.41 GB of
+protobuf and a maximum gap of 70 seconds. All 24 hours are covered. Two collectors ran about 28 seconds
+apart, so the observed mean version interval is 30.1 seconds; the intended schedule is still one fetch
+per minute. The local runner now takes an exclusive lock to prevent duplicate collectors for one directory.
+
+There are 540,225 distinct stored trip-stop rows for Monday over 499 routes; 5,506 delays outside ±1 hour
+are excluded, leaving 534,719 trusted passed stops. All Monday route IDs match static GTFS. No raw trip
+sighting lacked start_date, no stop lacked stop_sequence, and no stop reported time without delay.
+Most rail rows remain untracked (15,702 versus 3,994 tracked); their exactly-zero-delay shares are 3.57%
+and 5.16%. Keep untracked services and the existing ±1-hour quality rule, with regression tests for both.
+
+**Cancellations.** One trip was explicitly CANCELED in two raw snapshots and later reported running. A
+current database count of zero reflects its reinstatement. Eight sightings had every reported stop SKIPPED;
+do not infer entire-trip cancellations from these incomplete stop lists. UI labels now say feed-reported
+cancellations and explain that zero does not establish complete service delivery.
+
+**Punctuality window.** Keep the project −60/+300 second convention and disclose that it differs from
+[Translink's official definitions](https://translink.com.au/about-translink/reports-and-publications/performance).
+Official train results use destination/key-station measures, different late thresholds and force-majeure
+adjustments; changing a single threshold would not make these stop-level rates comparable.
+
+**Performance.** Current representative SQL plans run in about 9–191 ms. Do not add a daily aggregate
+table yet. Repeat with a complete week before accepting Phase 4's workload target. Frozen data, raw-feed
+counts, plans and HTTP timings are linked from [the validation report](validation-2026-10-13.md).

@@ -102,10 +102,12 @@ public sealed class ApiTests : IAsyncLifetime
         await _factory.DisposeAsync();
     }
 
-    [Fact]
-    public async Task OpenApi_endpoint_returns_valid_spec()
+    [Theory]
+    [InlineData("/openapi/v1.json")]
+    [InlineData("/api/openapi/v1.json")]
+    public async Task OpenApi_endpoint_returns_valid_spec(string path)
     {
-        var response = await _client.GetAsync("/openapi/v1.json");
+        var response = await _client.GetAsync(path);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var json = await response.Content.ReadAsStringAsync();

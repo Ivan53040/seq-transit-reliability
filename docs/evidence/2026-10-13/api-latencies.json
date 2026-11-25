@@ -1,0 +1,182 @@
+[
+  {
+    "path": "/api/health",
+    "iteration": 1,
+    "status": 200,
+    "elapsed_ms": 83.86
+  },
+  {
+    "path": "/api/health",
+    "iteration": 2,
+    "status": 200,
+    "elapsed_ms": 5.9
+  },
+  {
+    "path": "/api/health",
+    "iteration": 3,
+    "status": 200,
+    "elapsed_ms": 4.46
+  },
+  {
+    "path": "/api/health",
+    "iteration": 4,
+    "status": 200,
+    "elapsed_ms": 3.48
+  },
+  {
+    "path": "/api/health",
+    "iteration": 5,
+    "status": 200,
+    "elapsed_ms": 3.24
+  },
+  {
+    "path": "/api/routes/196-5146?date=2026-10-12&days=7",
+    "iteration": 1,
+    "status": 200,
+    "elapsed_ms": 19.01
+  },
+  {
+    "path": "/api/routes/196-5146?date=2026-10-12&days=7",
+    "iteration": 2,
+    "status": 200,
+    "elapsed_ms": 12.24
+  },
+  {
+    "path": "/api/routes/196-5146?date=2026-10-12&days=7",
+    "iteration": 3,
+    "status": 200,
+    "elapsed_ms": 11.57
+  },
+  {
+    "path": "/api/routes/196-5146?date=2026-10-12&days=7",
+    "iteration": 4,
+    "status": 200,
+    "elapsed_ms": 11.36
+  },
+  {
+    "path": "/api/routes/196-5146?date=2026-10-12&days=7",
+    "iteration": 5,
+    "status": 200,
+    "elapsed_ms": 10.63
+  },
+  {
+    "path": "/api/routes/196-5146/hours?date=2026-10-12",
+    "iteration": 1,
+    "status": 200,
+    "elapsed_ms": 11.82
+  },
+  {
+    "path": "/api/routes/196-5146/hours?date=2026-10-12",
+    "iteration": 2,
+    "status": 200,
+    "elapsed_ms": 9.71
+  },
+  {
+    "path": "/api/routes/196-5146/hours?date=2026-10-12",
+    "iteration": 3,
+    "status": 200,
+    "elapsed_ms": 10.91
+  },
+  {
+    "path": "/api/routes/196-5146/hours?date=2026-10-12",
+    "iteration": 4,
+    "status": 200,
+    "elapsed_ms": 10.29
+  },
+  {
+    "path": "/api/routes/196-5146/hours?date=2026-10-12",
+    "iteration": 5,
+    "status": 200,
+    "elapsed_ms": 10.7
+  },
+  {
+    "path": "/api/stops/worst?date=2026-10-12&limit=20",
+    "iteration": 1,
+    "status": 200,
+    "elapsed_ms": 157.41
+  },
+  {
+    "path": "/api/stops/worst?date=2026-10-12&limit=20",
+    "iteration": 2,
+    "status": 200,
+    "elapsed_ms": 130.68
+  },
+  {
+    "path": "/api/stops/worst?date=2026-10-12&limit=20",
+    "iteration": 3,
+    "status": 200,
+    "elapsed_ms": 129.64
+  },
+  {
+    "path": "/api/stops/worst?date=2026-10-12&limit=20",
+    "iteration": 4,
+    "status": 200,
+    "elapsed_ms": 135.31
+  },
+  {
+    "path": "/api/stops/worst?date=2026-10-12&limit=20",
+    "iteration": 5,
+    "status": 200,
+    "elapsed_ms": 129.26
+  },
+  {
+    "path": "/api/modes/on-time?date=2026-10-12",
+    "iteration": 1,
+    "status": 200,
+    "elapsed_ms": 98.29
+  },
+  {
+    "path": "/api/modes/on-time?date=2026-10-12",
+    "iteration": 2,
+    "status": 200,
+    "elapsed_ms": 86.84
+  },
+  {
+    "path": "/api/modes/on-time?date=2026-10-12",
+    "iteration": 3,
+    "status": 200,
+    "elapsed_ms": 86.23
+  },
+  {
+    "path": "/api/modes/on-time?date=2026-10-12",
+    "iteration": 4,
+    "status": 200,
+    "elapsed_ms": 91.82
+  },
+  {
+    "path": "/api/modes/on-time?date=2026-10-12",
+    "iteration": 5,
+    "status": 200,
+    "elapsed_ms": 87.17
+  },
+  {
+    "path": "/api/openapi/v1.json",
+    "iteration": 1,
+    "status": 200,
+    "elapsed_ms": 116.07
+  },
+  {
+    "path": "/api/openapi/v1.json",
+    "iteration": 2,
+    "status": 200,
+    "elapsed_ms": 6.1
+  },
+  {
+    "path": "/api/openapi/v1.json",
+    "iteration": 3,
+    "status": 200,
+    "elapsed_ms": 5.42
+  },
+  {
+    "path": "/api/openapi/v1.json",
+    "iteration": 4,
+    "status": 200,
+    "elapsed_ms": 4.57
+  },
+  {
+    "path": "/api/openapi/v1.json",
+    "iteration": 5,
+    "status": 200,
+    "elapsed_ms": 12.95
+  }
+]

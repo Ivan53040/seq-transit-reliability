@@ -1,0 +1,126 @@
+Pager usage is off.
+BEGIN
+SET
+ first_service_date | last_service_date | total_rows 
+--------------------+-------------------+------------
+ 2026-10-10         | 2026-10-13        |     844323
+(1 row)
+
+Route summary (seven-day date range; actual data volume shown above)
+                                                                                              QUERY PLAN                                                                                               
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=16156.56..16156.57 rows=1 width=56) (actual time=8.371..8.374 rows=1 loops=1)
+   Buffers: shared hit=3260 read=8
+   ->  Bitmap Heap Scan on stop_delay_observation  (cost=202.50..16155.78 rows=44 width=8) (actual time=0.851..7.005 rows=10014 loops=1)
+         Recheck Cond: ((route_id = 'L1-5029'::text) AND (service_date >= '2026-10-06'::date) AND (service_date <= '2026-10-12'::date))
+         Filter: ((event_time IS NOT NULL) AND (COALESCE(arrival_delay_s, departure_delay_s) >= '-3600'::integer) AND (COALESCE(arrival_delay_s, departure_delay_s) <= 3600) AND (event_time < now()))
+         Heap Blocks: exact=3231
+         Buffers: shared hit=3252 read=8
+         ->  Bitmap Index Scan on ix_stop_delay_route_date  (cost=0.00..202.49 rows=9125 width=0) (actual time=0.590..0.591 rows=10014 loops=1)
+               Index Cond: ((route_id = 'L1-5029'::text) AND (service_date >= '2026-10-06'::date) AND (service_date <= '2026-10-12'::date))
+               Buffers: shared hit=29
+ Planning:
+   Buffers: shared hit=30
+ Planning Time: 0.423 ms
+ Execution Time: 8.513 ms
+(14 rows)
+
+Hourly route performance
+                                                                                                 QUERY PLAN                                                                                                  
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=15649.20..15650.94 rows=41 width=44) (actual time=8.604..9.294 rows=22 loops=1)
+   Group Key: ((EXTRACT(hour FROM (stop_delay_observation.event_time AT TIME ZONE 'Australia/Brisbane'::text)))::integer)
+   Buffers: shared hit=2973
+   ->  Sort  (cost=15649.20..15649.30 rows=41 width=12) (actual time=8.571..8.802 rows=8581 loops=1)
+         Sort Key: ((EXTRACT(hour FROM (stop_delay_observation.event_time AT TIME ZONE 'Australia/Brisbane'::text)))::integer)
+         Sort Method: quicksort  Memory: 653kB
+         Buffers: shared hit=2973
+         ->  Bitmap Heap Scan on stop_delay_observation  (cost=170.28..15648.10 rows=41 width=12) (actual time=0.813..7.528 rows=8581 loops=1)
+               Recheck Cond: ((route_id = 'L1-5029'::text) AND (service_date = '2026-10-12'::date))
+               Filter: ((event_time IS NOT NULL) AND (COALESCE(arrival_delay_s, departure_delay_s) >= '-3600'::integer) AND (COALESCE(arrival_delay_s, departure_delay_s) <= 3600) AND (event_time < now()))
+               Heap Blocks: exact=2945
+               Buffers: shared hit=2970
+               ->  Bitmap Index Scan on ix_stop_delay_route_date  (cost=0.00..170.27 rows=8584 width=0) (actual time=0.445..0.446 rows=8581 loops=1)
+                     Index Cond: ((route_id = 'L1-5029'::text) AND (service_date = '2026-10-12'::date))
+                     Buffers: shared hit=25
+ Planning:
+   Buffers: shared hit=12
+ Planning Time: 0.261 ms
+ Execution Time: 9.480 ms
+(19 rows)
+
+Worst stops (minimum 20)
+                                                                                                                              QUERY PLAN                                                                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=28761.00..28761.05 rows=20 width=101) (actual time=190.633..190.775 rows=20 loops=1)
+   Buffers: shared hit=12992 read=6641
+   ->  Sort  (cost=28761.00..28763.19 rows=878 width=101) (actual time=190.630..190.770 rows=20 loops=1)
+         Sort Key: ((round(avg(COALESCE(stop_delay_observation.arrival_delay_s, stop_delay_observation.departure_delay_s)), 1))::double precision) DESC
+         Sort Method: top-N heapsort  Memory: 31kB
+         Buffers: shared hit=12992 read=6641
+         ->  HashAggregate  (cost=28689.34..28737.63 rows=878 width=101) (actual time=183.752..189.895 rows=7530 loops=1)
+               Group Key: stop_delay_observation.stop_id, s.stop_name, s.stop_lat, s.stop_lon
+               Filter: (count(*) >= 20)
+               Batches: 1  Memory Usage: 3985kB
+               Rows Removed by Filter: 5320
+               Buffers: shared hit=12992 read=6641
+               ->  Gather  (cost=1435.27..28630.08 rows=2634 width=61) (actual time=3.207..40.613 rows=534719 loops=1)
+                     Workers Planned: 2
+                     Workers Launched: 2
+                     Buffers: shared hit=12992 read=6641
+                     ->  Hash Left Join  (cost=435.27..27366.68 rows=1098 width=61) (actual time=3.080..80.056 rows=178240 loops=3)
+                           Hash Cond: (stop_delay_observation.stop_id = s.stop_id)
+                           Buffers: shared hit=12992 read=6641
+                           ->  Parallel Seq Scan on stop_delay_observation  (cost=0.00..26928.53 rows=1098 width=13) (actual time=0.031..40.246 rows=178240 loops=3)
+                                 Filter: ((event_time IS NOT NULL) AND (COALESCE(arrival_delay_s, departure_delay_s) >= '-3600'::integer) AND (COALESCE(arrival_delay_s, departure_delay_s) <= 3600) AND (service_date = '2026-10-12'::date) AND (event_time < now()))
+                                 Rows Removed by Filter: 103201
+                                 Buffers: shared hit=12372 read=6641
+                           ->  Hash  (cost=271.23..271.23 rows=13123 width=54) (actual time=2.695..2.697 rows=13123 loops=3)
+                                 Buckets: 16384  Batches: 1  Memory Usage: 1287kB
+                                 Buffers: shared hit=420
+                                 ->  Seq Scan on gtfs_stop s  (cost=0.00..271.23 rows=13123 width=54) (actual time=0.016..0.985 rows=13123 loops=3)
+                                       Buffers: shared hit=420
+ Planning:
+   Buffers: shared hit=105 read=8
+ Planning Time: 1.059 ms
+ Execution Time: 191.460 ms
+(32 rows)
+
+Mode performance
+                                                                                                                              QUERY PLAN                                                                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize GroupAggregate  (cost=28027.87..28048.21 rows=4 width=20) (actual time=103.165..120.613 rows=4 loops=1)
+   Group Key: (COALESCE(r.route_type, '-1'::integer))
+   Buffers: shared hit=12653 read=6545, temp read=1435 written=1441
+   ->  Gather Merge  (cost=28027.87..28048.04 rows=8 width=52) (actual time=102.473..120.566 rows=12 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=12653 read=6545, temp read=1435 written=1441
+         ->  Partial GroupAggregate  (cost=27027.84..27047.10 rows=4 width=52) (actual time=81.887..99.599 rows=4 loops=3)
+               Group Key: (COALESCE(r.route_type, '-1'::integer))
+               Buffers: shared hit=12653 read=6545, temp read=1435 written=1441
+               ->  Sort  (cost=27027.84..27030.59 rows=1098 width=12) (actual time=81.607..89.380 rows=178240 loops=3)
+                     Sort Key: (COALESCE(r.route_type, '-1'::integer))
+                     Sort Method: external merge  Disk: 4104kB
+                     Buffers: shared hit=12653 read=6545, temp read=1435 written=1441
+                     Worker 0:  Sort Method: external merge  Disk: 3896kB
+                     Worker 1:  Sort Method: external merge  Disk: 3480kB
+                     ->  Hash Left Join  (cost=40.97..26972.39 rows=1098 width=12) (actual time=0.287..59.322 rows=178240 loops=3)
+                           Hash Cond: (stop_delay_observation.route_id = r.route_id)
+                           Buffers: shared hit=12541 read=6545
+                           ->  Parallel Seq Scan on stop_delay_observation  (cost=0.00..26928.53 rows=1098 width=16) (actual time=0.020..40.991 rows=178240 loops=3)
+                                 Filter: ((event_time IS NOT NULL) AND (COALESCE(arrival_delay_s, departure_delay_s) >= '-3600'::integer) AND (COALESCE(arrival_delay_s, departure_delay_s) <= 3600) AND (service_date = '2026-10-12'::date) AND (event_time < now()))
+                                 Rows Removed by Filter: 103201
+                                 Buffers: shared hit=12468 read=6545
+                           ->  Hash  (cost=25.43..25.43 rows=1243 width=13) (actual time=0.205..0.207 rows=1243 loops=3)
+                                 Buckets: 2048  Batches: 1  Memory Usage: 72kB
+                                 Buffers: shared hit=39
+                                 ->  Seq Scan on gtfs_route r  (cost=0.00..25.43 rows=1243 width=13) (actual time=0.013..0.092 rows=1243 loops=3)
+                                       Buffers: shared hit=39
+ Planning:
+   Buffers: shared hit=36
+ Planning Time: 0.568 ms
+ Execution Time: 121.432 ms
+(32 rows)
+
+COMMIT

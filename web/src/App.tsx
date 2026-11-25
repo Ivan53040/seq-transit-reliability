@@ -55,6 +55,9 @@ export function App() {
           On time means arriving between 1 minute early and 5 minutes late, counted only at stops the vehicle
           has already passed. Sample sizes are always presented alongside punctuality rates. Source: Translink
           real-time GTFS-RT feed and South East Queensland GTFS Timetable, licensed under CC BY 4.0.
+          This is a common stop-level window, not Translink’s official performance measure.
+          Cancellation counts include only cancellations explicitly reported in the feed; zero does not
+          confirm that every scheduled trip ran.
         </p>
       </footer>
     </div>
@@ -272,7 +275,7 @@ function RouteBoard({ report, date }: { report: DayReport; date: string }) {
                 Stops
               </th>
               <th scope="col" className="num">
-                Cancelled
+                Feed-reported cancellations
               </th>
             </tr>
           </thead>

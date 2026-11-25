@@ -37,9 +37,9 @@ export function HourlyPerformanceChart({ data }: HourlyPerformanceChartProps) {
     <div className="chart-wrapper" aria-labelledby="hourly-chart-heading">
       <div className="chart-header-row">
         <div>
-          <h3 id="hourly-chart-heading" className="chart-title">
+          <h2 id="hourly-chart-heading" className="chart-title">
             Hourly Punctuality & Peak Congestion
-          </h3>
+          </h2>
           <p className="chart-subtitle">On-time rate by hour of day (Brisbane Time AEST)</p>
         </div>
         <div className="chart-legend" aria-hidden="true">

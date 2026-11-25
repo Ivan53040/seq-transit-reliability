@@ -43,6 +43,19 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      # Exercise the real entrypoint offline; assertions alone do not catch missing app files.
+      - name: Synthesize the application and GitHub stacks offline
+        env:
+          CDK_DEFAULT_ACCOUNT: '123456789012'
+          CDK_DEFAULT_REGION: ap-southeast-2
+          SEQ_DB_HOST: example.cluster-test.ap-southeast-2.rds.amazonaws.com
+          SEQ_DB_CLUSTER_RESOURCE_ID: cluster-TESTRESOURCEID
+          SEQ_GITHUB_REPOSITORY: Ivan53040/seq-transit-reliability
+        run: |
+          mkdir -p ../artifacts/ingestion ../artifacts/api ../web/dist
+          touch ../artifacts/ingestion/placeholder ../artifacts/api/placeholder ../web/dist/placeholder
+          npx cdk synth SeqTransitStack --quiet --no-lookups
+          npx cdk --app "npx tsx bin/github.ts" synth SeqTransitGitHubStack --quiet --no-lookups
 
   web:
     name: Dashboard build
@@ -75,6 +88,8 @@ jobs:
       SEQ_DB_HOST: ${{ vars.SEQ_DB_HOST }}
       SEQ_DB_CLUSTER_RESOURCE_ID: ${{ vars.SEQ_DB_CLUSTER_RESOURCE_ID }}
       SEQ_ALERT_EMAIL: ${{ vars.SEQ_ALERT_EMAIL }}
+      SEQ_MONTHLY_BUDGET_USD: ${{ vars.SEQ_MONTHLY_BUDGET_USD }}
+      SEQ_LOAD_INTERVAL_MINUTES: ${{ vars.SEQ_LOAD_INTERVAL_MINUTES }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4

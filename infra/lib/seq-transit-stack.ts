@@ -258,8 +258,8 @@ function handler(event) {
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       }),
       new cloudwatch.Alarm(this, 'ApiErrorsAlarm', {
-        alarmDescription: 'The API function returned errors 5 or more times in 5 minutes.',
-        metric: apiFn.metricErrors({ statistic: 'Sum', period: Duration.minutes(5) }),
+        alarmDescription: 'The HTTP API returned 5xx errors 5 or more times in 5 minutes.',
+        metric: httpApi.metricServerError({ statistic: 'Sum', period: Duration.minutes(5) }),
         threshold: 5,
         comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         evaluationPeriods: 1,

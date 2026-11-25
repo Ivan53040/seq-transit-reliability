@@ -1,5 +1,7 @@
 # .NET
 bin/
+!infra/bin/
+!infra/bin/*.ts
 obj/
 artifacts/
 *.user
@@ -19,6 +21,8 @@ infra/cdk.context.json
 .env
 .env.*
 !.env.example
+*.pem
+*.key
 appsettings.Local.json
 
 # OS / editors
