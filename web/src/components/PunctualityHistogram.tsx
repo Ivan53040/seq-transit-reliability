@@ -126,7 +126,7 @@ export function PunctualityHistogram({
               tabIndex={0}
               role="button"
               aria-pressed={isSelected}
-              aria-label={`${band.label} on time: ${count} routes. Activate to filter routes.`}
+              aria-label={`${band.shortLabel}: ${count} routes (${band.label} on time). Activate to filter routes.`}
               onClick={() => toggle(band.key)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
