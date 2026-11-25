@@ -247,3 +247,17 @@ test('the GitHub role may sign in to the database as postgres (migrations) and s
   assert.match(policies, /dbuser:cluster-TESTRESOURCEID\/seq_ingest/);
   assert.doesNotMatch(policies, /dbuser:cluster-TESTRESOURCEID\/seq_api/);
 });
+
+test('hashed web assets are cached for a year and the rest is revalidated on every visit', () => {
+  template.hasResourceProperties('Custom::CDKBucketDeployment', {
+    Exclude: ['*'],
+    Include: ['assets/*'],
+    Prune: false,
+    SystemMetadata: { 'cache-control': 'public, max-age=31536000, immutable' },
+  });
+  template.hasResourceProperties('Custom::CDKBucketDeployment', {
+    Exclude: ['assets/*'],
+    SystemMetadata: { 'cache-control': 'no-cache' },
+    DistributionPaths: ['/*'],
+  });
+});

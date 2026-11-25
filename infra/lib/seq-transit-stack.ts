@@ -309,12 +309,32 @@ function handler(event) {
       errorResponses: [500, 502, 503, 504].map((httpStatus) => ({ httpStatus, ttl: Duration.seconds(0) })),
     });
 
-    new s3deploy.BucketDeployment(this, 'DeploySite', {
+    // Vite puts a content hash in every file name under assets/, so those files never change and
+    // browsers may keep them for a year. Everything else (index.html, favicon) is revalidated on
+    // each visit, so a deploy is picked up at once. The hashed files go first and old ones are
+    // kept, so a page loaded just before a deploy can still fetch the files it refers to.
+    const deployAssets = new s3deploy.BucketDeployment(this, 'DeploySiteAssets', {
       sources: [s3deploy.Source.asset(config.artifacts.web)],
       destinationBucket: site,
+      exclude: ['*'],
+      include: ['assets/*'],
+      prune: false,
+      cacheControl: [
+        s3deploy.CacheControl.setPublic(),
+        s3deploy.CacheControl.maxAge(Duration.days(365)),
+        s3deploy.CacheControl.immutable(),
+      ],
+    });
+
+    const deploySite = new s3deploy.BucketDeployment(this, 'DeploySite', {
+      sources: [s3deploy.Source.asset(config.artifacts.web)],
+      destinationBucket: site,
+      exclude: ['assets/*'],
+      cacheControl: [s3deploy.CacheControl.noCache()],
       distribution,
       distributionPaths: ['/*'],
     });
+    deploySite.node.addDependency(deployAssets);
 
     // ---------- Monitoring ----------
     const alerts = new sns.Topic(this, 'AlertTopic', { displayName: 'SEQ Transit Reliability alerts' });
