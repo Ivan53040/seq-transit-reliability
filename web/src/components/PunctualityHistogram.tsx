@@ -126,7 +126,9 @@ export function PunctualityHistogram({
               tabIndex={0}
               role="button"
               aria-pressed={isSelected}
-              aria-label={`${band.shortLabel}: ${count} routes (${band.label} on time). Activate to filter routes.`}
+              // Starts with the bar's visible text (count, then band) so voice control users can say what they
+              // see.
+              aria-label={`${count} ${band.shortLabel}: routes ${band.label.toLowerCase()} on time. Activate to filter routes.`}
               onClick={() => toggle(band.key)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -197,7 +199,8 @@ export function PunctualityHistogram({
                 textAnchor="middle"
                 className={`chart-hour-label ${isSelected ? 'selected-axis-label' : ''}`}
               >
-                {band.shortLabel}
+                {/* The leading space (collapsed when drawn) keeps the visible text "139 <50%", not "139<50%". */}
+                {` ${band.shortLabel}`}
               </text>
             </g>
           );
