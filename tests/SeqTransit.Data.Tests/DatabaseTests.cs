@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using SeqTransit.Core.Ingestion;
 using SeqTransit.Core.Model;
 using SeqTransit.Core.Reliability;
@@ -535,5 +536,73 @@ public sealed class DatabaseTests(PostgresFixture database) : IAsyncLifetime
         await using var command = database.DataSource.CreateCommand(
             "SELECT attgenerated FROM pg_attribute WHERE attrelid = 'stop_delay_observation'::regclass AND attname = 'delay_s'");
         Assert.Equal('s', (char)await command.ExecuteScalarAsync());
+    }
+
+    [Fact]
+    public async Task Archiving_a_day_keeps_its_figures_and_removes_its_detail()
+    {
+        // Four stops on one route: on time, late, on time, and one with an untrusted delay.
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(
+            Batch(T0, [
+                Observation(1, delay: 30, feedAt: T0),
+                Observation(2, delay: 400, feedAt: T0),
+                Observation(3, delay: 60, feedAt: T0, stopId: "STOP-2"),
+                Observation(4, delay: 5000, feedAt: T0),
+            ]),
+            CancellationToken.None);
+
+        async Task<object> Snapshot()
+        {
+            await using var db = database.CreateDbContext();
+            var q = new ReliabilityQueries(db);
+            var routes = await q.OnTimeByRouteAsync(Day, OnTimePolicy.Default, T0.AddDays(1), CancellationToken.None);
+            var stops = await q.StopsByRouteAsync("66-1", Day, OnTimePolicy.Default, T0.AddDays(1), CancellationToken.None);
+            var daily = await q.DailyOnTimeAsync("66-1", Day.AddDays(-6), Day, OnTimePolicy.Default, T0.AddDays(1), CancellationToken.None);
+            var worst = await q.WorstStopsAsync(Day, OnTimePolicy.Default, T0.AddDays(1), 10, 1, CancellationToken.None);
+            var modes = await q.ModesOnTimeAsync(Day, OnTimePolicy.Default, T0.AddDays(1), CancellationToken.None);
+            var summary = await q.RouteSummaryAsync("66-1", Day, Day, OnTimePolicy.Default, T0.AddDays(1), CancellationToken.None);
+            return System.Text.Json.JsonSerializer.Serialize(new
+            {
+                routes,
+                stops = stops.OrderBy(s => s.StopId),
+                daily,
+                worst = worst.OrderBy(w => w.StopId),
+                modes,
+                summary!.ObservedStops,
+                summary.OnTimeStops,
+                summary.OnTimeRate,
+                summary.AverageDelaySeconds,
+            });
+        }
+
+        var before = await Snapshot();
+
+        var result = await new DetailArchiver(database.DataSource)
+            .ArchiveBeforeAsync(Day.AddDays(1), OnTimePolicy.Default, maxDays: 5, CancellationToken.None);
+
+        Assert.Equal([Day], result.ArchivedDays);
+        Assert.Equal(4, result.DetailRowsDeleted);
+        Assert.Equal(before, await Snapshot());
+
+        await using var db = database.CreateDbContext();
+        Assert.Equal(0, await db.StopDelayObservations.CountAsync());
+        var summaryAfter = await new ReliabilityQueries(db)
+            .RouteSummaryAsync("66-1", Day, Day, OnTimePolicy.Default, T0.AddDays(1), CancellationToken.None);
+        Assert.Null(summaryAfter!.MedianDelaySeconds);
+    }
+
+    [Fact]
+    public async Task Archiving_leaves_days_inside_the_retention_window_alone()
+    {
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(Batch(T0, [Observation(1, delay: 30, feedAt: T0)]), CancellationToken.None);
+
+        var result = await new DetailArchiver(database.DataSource)
+            .ArchiveBeforeAsync(Day, OnTimePolicy.Default, maxDays: 5, CancellationToken.None);
+
+        Assert.Empty(result.ArchivedDays);
+        await using var db = database.CreateDbContext();
+        Assert.Equal(1, await db.StopDelayObservations.CountAsync());
     }
 }

@@ -105,19 +105,17 @@ public sealed class ReliabilityQueries(TransitDbContext db)
         var early = -policy.EarlyToleranceSeconds;
         var late = policy.LateToleranceSeconds;
 
-        var groups = await PassedStops(now)
-            .Where(o => o.ServiceDate == serviceDate)
-            .GroupBy(o => o.RouteId)
-            .Select(g => new
-            {
-                RouteId = g.Key,
-                Observed = g.Count(),
-                OnTime = g.Count(o => o.DelaySeconds >= early && o.DelaySeconds <= late),
-                AverageDelay = g.Average(o => (double)o.DelaySeconds),
-            })
-            .ToListAsync(cancellationToken);
+        var groups = await db.Database.SqlQuery<KeyStatsRow>($"""
+            SELECT
+                route_id AS "Key",
+                sum(observed_stops)::int AS "Observed",
+                sum(on_time_stops)::int AS "OnTime",
+                (sum(total_delay_s)::float8 / sum(observed_stops)) AS "AverageDelay"
+            FROM stop_day_figures({serviceDate}, {serviceDate}, {now}, {early}, {late})
+            GROUP BY route_id
+            """).ToListAsync(cancellationToken);
 
-        var routeIds = groups.Select(g => g.RouteId).Distinct().ToList();
+        var routeIds = groups.Select(g => g.Key).Distinct().ToList();
         var staticRoutes = await db.GtfsRoutes
             .AsNoTracking()
             .Where(r => routeIds.Contains(r.RouteId))
@@ -126,12 +124,12 @@ public sealed class ReliabilityQueries(TransitDbContext db)
         return groups
             .Select(g =>
             {
-                var staticRoute = staticRoutes.GetValueOrDefault(g.RouteId);
-                var shortName = staticRoute?.RouteShortName ?? g.RouteId;
+                var staticRoute = staticRoutes.GetValueOrDefault(g.Key);
+                var shortName = staticRoute?.RouteShortName ?? g.Key;
                 var longName = staticRoute?.RouteLongName ?? string.Empty;
                 var routeType = staticRoute?.RouteType ?? UnknownRouteType;
                 return new RouteOnTime(
-                    g.RouteId,
+                    g.Key,
                     shortName,
                     longName,
                     routeType,
@@ -151,17 +149,16 @@ public sealed class ReliabilityQueries(TransitDbContext db)
         var early = -policy.EarlyToleranceSeconds;
         var late = policy.LateToleranceSeconds;
 
-        var days = await PassedStops(now)
-            .Where(o => o.RouteId == routeId && o.ServiceDate >= from && o.ServiceDate <= to)
-            .GroupBy(o => o.ServiceDate)
-            .Select(g => new
-            {
-                ServiceDate = g.Key,
-                Observed = g.Count(),
-                OnTime = g.Count(o => o.DelaySeconds >= early && o.DelaySeconds <= late),
-                AverageDelay = g.Average(o => (double)o.DelaySeconds),
-            })
-            .ToListAsync(cancellationToken);
+        var days = await db.Database.SqlQuery<DayStatsRow>($"""
+            SELECT
+                service_date AS "ServiceDate",
+                sum(observed_stops)::int AS "Observed",
+                sum(on_time_stops)::int AS "OnTime",
+                (sum(total_delay_s)::float8 / sum(observed_stops)) AS "AverageDelay"
+            FROM stop_day_figures({from}, {to}, {now}, {early}, {late})
+            WHERE route_id = {routeId}
+            GROUP BY service_date
+            """).ToListAsync(cancellationToken);
 
         return days
             .OrderBy(d => d.ServiceDate)
@@ -175,19 +172,18 @@ public sealed class ReliabilityQueries(TransitDbContext db)
         var early = -policy.EarlyToleranceSeconds;
         var late = policy.LateToleranceSeconds;
 
-        var groups = await PassedStops(now)
-            .Where(o => o.RouteId == routeId && o.ServiceDate == serviceDate)
-            .GroupBy(o => o.StopId)
-            .Select(g => new
-            {
-                StopId = g.Key,
-                Observed = g.Count(),
-                OnTime = g.Count(o => o.DelaySeconds >= early && o.DelaySeconds <= late),
-                AverageDelay = g.Average(o => (double)o.DelaySeconds),
-            })
-            .ToListAsync(cancellationToken);
+        var groups = await db.Database.SqlQuery<KeyStatsRow>($"""
+            SELECT
+                stop_id AS "Key",
+                sum(observed_stops)::int AS "Observed",
+                sum(on_time_stops)::int AS "OnTime",
+                (sum(total_delay_s)::float8 / sum(observed_stops)) AS "AverageDelay"
+            FROM stop_day_figures({serviceDate}, {serviceDate}, {now}, {early}, {late})
+            WHERE route_id = {routeId}
+            GROUP BY stop_id
+            """).ToListAsync(cancellationToken);
 
-        var stopIds = groups.Select(g => g.StopId).Distinct().ToList();
+        var stopIds = groups.Select(g => g.Key).Distinct().ToList();
         var staticStops = await db.GtfsStops
             .AsNoTracking()
             .Where(s => stopIds.Contains(s.StopId))
@@ -196,10 +192,10 @@ public sealed class ReliabilityQueries(TransitDbContext db)
         return groups
             .Select(g =>
             {
-                var staticStop = staticStops.GetValueOrDefault(g.StopId);
-                var stopName = staticStop?.StopName ?? g.StopId;
+                var staticStop = staticStops.GetValueOrDefault(g.Key);
+                var stopName = staticStop?.StopName ?? g.Key;
                 return new RouteStopPerformance(
-                    g.StopId,
+                    g.Key,
                     stopName,
                     g.Observed,
                     g.OnTime,
@@ -263,11 +259,9 @@ public sealed class ReliabilityQueries(TransitDbContext db)
     }
 
     // The trusted-data rules (has a time and a delay, |delay| <= 1 hour) live in the
-    // reliable_stop_observation view (db/migrations/0006); only "already passed" is applied here.
-    private IQueryable<ReliableObservationRow> PassedStops(DateTimeOffset now) =>
-        db.ReliableObservations
-            .AsNoTracking()
-            .Where(o => o.EventTime < now);
+    // reliable_stop_observation view (migrations 0006, 0008). Counts are read through
+    // stop_day_figures (migration 0009), which adds archived days, so a day reports the same
+    // numbers before and after its detail is archived. "Already passed" is the as_of argument.
 
     private static double Rate(int part, int total) => total == 0 ? 0 : Math.Round((double)part / total, 4);
 
@@ -277,19 +271,41 @@ public sealed class ReliabilityQueries(TransitDbContext db)
         var early = -policy.EarlyToleranceSeconds;
         var late = policy.LateToleranceSeconds;
 
+        // Counts come from detail plus archived days. Percentiles need the individual delays, so
+        // they are only reported when every day in the range still has its detail.
         var stat = await db.Database.SqlQuery<RouteSummaryStatsRow>($"""
+            WITH totals AS (
+                SELECT
+                    coalesce(sum(observed_stops), 0)::int AS observed,
+                    coalesce(sum(on_time_stops), 0)::int AS on_time,
+                    coalesce(sum(total_delay_s)::float8 / nullif(sum(observed_stops), 0), 0) AS average_delay
+                FROM stop_day_figures({from}, {to}, {now}, {early}, {late})
+                WHERE route_id = {routeId}
+            ),
+            detail AS (
+                SELECT
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY delay_s) AS median,
+                    percentile_cont(0.9) WITHIN GROUP (ORDER BY delay_s) AS p90
+                FROM reliable_stop_observation
+                WHERE route_id = {routeId}
+                  AND service_date >= {from}
+                  AND service_date <= {to}
+                  AND event_time < {now}
+            )
             SELECT
-                count(*)::int AS "ObservedStops",
-                count(*) FILTER (WHERE delay_s >= {early}
-                                  AND delay_s <= {late})::int AS "OnTimeStops",
-                coalesce(avg(delay_s), 0)::float8 AS "AverageDelaySeconds",
-                coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY delay_s), 0)::float8 AS "MedianDelaySeconds",
-                coalesce(percentile_cont(0.9) WITHIN GROUP (ORDER BY delay_s), 0)::float8 AS "P90DelaySeconds"
-            FROM reliable_stop_observation
-            WHERE route_id = {routeId}
-              AND service_date >= {from}
-              AND service_date <= {to}
-              AND event_time < {now}
+                t.observed AS "ObservedStops",
+                t.on_time AS "OnTimeStops",
+                t.average_delay AS "AverageDelaySeconds",
+                CASE WHEN archived.any THEN NULL ELSE coalesce(d.median, 0) END::float8 AS "MedianDelaySeconds",
+                CASE WHEN archived.any THEN NULL ELSE coalesce(d.p90, 0) END::float8 AS "P90DelaySeconds"
+            FROM totals t
+            CROSS JOIN detail d
+            CROSS JOIN (
+                SELECT EXISTS (
+                    SELECT 1 FROM stop_daily_stats
+                    WHERE route_id = {routeId} AND service_date >= {from} AND service_date <= {to}
+                ) AS any
+            ) archived
             """).FirstOrDefaultAsync(cancellationToken);
 
         var staticRoute = await db.GtfsRoutes
@@ -321,8 +337,8 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             stat.OnTimeStops,
             hasData ? Rate(stat.OnTimeStops, stat.ObservedStops) : null,
             hasData ? Math.Round(stat.AverageDelaySeconds, 1) : null,
-            hasData ? Math.Round(stat.MedianDelaySeconds, 1) : null,
-            hasData ? Math.Round(stat.P90DelaySeconds, 1) : null,
+            hasData && stat.MedianDelaySeconds is { } median ? Math.Round(median, 1) : null,
+            hasData && stat.P90DelaySeconds is { } p90 ? Math.Round(p90, 1) : null,
             cancelledTrips);
     }
 
@@ -372,15 +388,12 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             WITH per_stop AS (
                 SELECT
                     stop_id,
-                    count(*) AS observed,
-                    count(*) FILTER (WHERE delay_s >= {early}
-                                      AND delay_s <= {late}) AS on_time,
-                    round(avg(delay_s)::numeric, 1) AS average_delay
-                FROM reliable_stop_observation
-                WHERE service_date = {serviceDate}
-                  AND event_time < {now}
+                    sum(observed_stops) AS observed,
+                    sum(on_time_stops) AS on_time,
+                    round(sum(total_delay_s)::numeric / sum(observed_stops), 1) AS average_delay
+                FROM stop_day_figures({serviceDate}, {serviceDate}, {now}, {early}, {late})
                 GROUP BY stop_id
-                HAVING count(*) >= {minObservations}
+                HAVING sum(observed_stops) >= {minObservations}
                 ORDER BY average_delay DESC
                 LIMIT {limit}
             )
@@ -422,13 +435,10 @@ public sealed class ReliabilityQueries(TransitDbContext db)
             WITH per_route AS (
                 SELECT
                     route_id,
-                    count(*) AS observed,
-                    count(*) FILTER (WHERE delay_s >= {early}
-                                      AND delay_s <= {late}) AS on_time,
-                    sum(delay_s) AS total_delay
-                FROM reliable_stop_observation
-                WHERE service_date = {serviceDate}
-                  AND event_time < {now}
+                    sum(observed_stops) AS observed,
+                    sum(on_time_stops) AS on_time,
+                    sum(total_delay_s) AS total_delay
+                FROM stop_day_figures({serviceDate}, {serviceDate}, {now}, {early}, {late})
                 GROUP BY route_id
             )
             SELECT
@@ -472,8 +482,8 @@ internal sealed class RouteSummaryStatsRow
     public int ObservedStops { get; set; }
     public int OnTimeStops { get; set; }
     public double AverageDelaySeconds { get; set; }
-    public double MedianDelaySeconds { get; set; }
-    public double P90DelaySeconds { get; set; }
+    public double? MedianDelaySeconds { get; set; }
+    public double? P90DelaySeconds { get; set; }
 }
 
 internal sealed class RouteHourStatsRow
@@ -501,4 +511,20 @@ internal sealed class ModeReliabilityStatsRow
     public int ObservedStops { get; set; }
     public int OnTimeStops { get; set; }
     public double AverageDelaySeconds { get; set; }
+}
+
+internal sealed class KeyStatsRow
+{
+    public string Key { get; set; } = string.Empty;
+    public int Observed { get; set; }
+    public int OnTime { get; set; }
+    public double AverageDelay { get; set; }
+}
+
+internal sealed class DayStatsRow
+{
+    public DateOnly ServiceDate { get; set; }
+    public int Observed { get; set; }
+    public int OnTime { get; set; }
+    public double AverageDelay { get; set; }
 }

@@ -165,3 +165,27 @@ adjustments; changing a single threshold would not make these stop-level rates c
 **Performance.** Current representative SQL plans run in about 9–191 ms. Do not add a daily aggregate
 table yet. Repeat with a complete week before accepting Phase 4's workload target. Frozen data, raw-feed
 counts, plans and HTTP timings are linked from [the validation report](validation-2026-10-13.md).
+
+## 14. Measured query plans; 90 days of detail, daily totals after that
+
+**Evidence.** On 25 November 2026 the representative queries ran against Aurora (PostgreSQL 17.9,
+`work_mem` 4 MB) with about 177,000 rows from 24–25 November; output in
+[docs/evidence/2026-11-25/query-plans.txt](evidence/2026-11-25/query-plans.txt). The planner
+estimated 337 rows where 53,554 matched on every full-day scan, because the view filtered on the
+expression `coalesce(arrival_delay_s, departure_delay_s)`, which has no statistics. With that
+estimate `/api/stops/worst` used a nested loop over `gtfs_stop` and took about 0.8 s, and the
+full-day GROUP BY sorts spilled to disk.
+
+**Decision.** Migration 0008 stores the delay as a generated column (statistics, correct
+estimates), points the view at it, and gives the app roles 16 MB of `work_mem`; worst stops and
+modes aggregate before joining static GTFS. A full weekday is about 540,000 rows (about 190 MB
+with indexes), so detail kept forever would cost tens of GB a year on a 10-dollar budget.
+Migration 0009 keeps per-stop detail for 90 days (`DETAIL_RETENTION_DAYS`) and per-day,
+per-route, per-stop totals (`stop_daily_stats`) after that. The load function archives at most
+one day per run, after it has caught up.
+
+**Consequences.** Every count, rate and average is read through `stop_day_figures`, so a day
+reports the same numbers before and after archiving (tested). Hourly figures and median/P90
+delays need individual delays: for archived days the hourly chart is empty and the percentiles
+are null. Archived on-time counts keep the OnTime window in force when they were archived; the
+window is stored on each row.

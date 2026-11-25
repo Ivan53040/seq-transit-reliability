@@ -2,7 +2,9 @@ using Amazon.Lambda.Core;
 using Amazon.Lambda.Serialization.SystemTextJson;
 using Amazon.S3;
 using Npgsql;
+using SeqTransit.Core;
 using SeqTransit.Core.Ingestion;
+using SeqTransit.Core.Reliability;
 using SeqTransit.Data;
 
 [assembly: LambdaSerializer(typeof(DefaultLambdaJsonSerializer))]
@@ -61,7 +63,8 @@ public sealed record LoadSummary(
     int ObservationRowsWritten,
     int CancellationRowsWritten,
     DateTimeOffset? Watermark,
-    bool BacklogRemaining);
+    bool BacklogRemaining,
+    IReadOnlyList<DateOnly>? ArchivedDays = null);
 
 /// <summary>
 /// Runs on a schedule (every 30 minutes by default): loads every stored snapshot newer than the database watermark,
@@ -74,6 +77,8 @@ public sealed class LoadFunction
         new(() => TransitDataSource.Create(DatabaseOptions.FromEnvironment()));
 
     private readonly SnapshotLoader _loader;
+    private readonly DetailArchiver _archiver;
+    private readonly int _retentionDays;
 
     public LoadFunction()
     {
@@ -84,6 +89,8 @@ public sealed class LoadFunction
             new ObservationWriter(DataSource.Value),
             TimeProvider.System,
             options);
+        _archiver = new DetailArchiver(DataSource.Value);
+        _retentionDays = Math.Max(7, Settings.Int("DETAIL_RETENTION_DAYS", 90));
     }
 
     public async Task<LoadSummary> HandleAsync(Stream input, ILambdaContext context)
@@ -124,7 +131,23 @@ public sealed class LoadFunction
             context.Logger.LogWarning("LOAD_BACKLOG more snapshots are waiting; the next run continues from the watermark");
         }
 
-        return new LoadSummary(batches, snapshots, unreadable, observationRows, cancellationRows, batch.Watermark, batch.MoreAvailable);
+        // Retention (decision 14): archive at most one old service day per run, and only once the
+        // load has caught up, so archiving never delays fresh data.
+        IReadOnlyList<DateOnly> archived = [];
+        if (!batch.MoreAvailable && context.RemainingTime > TimeSpan.FromMinutes(2))
+        {
+            using var archiveTimeout = new CancellationTokenSource(Settings.Budget(context, TimeSpan.FromSeconds(30)));
+            var cutoff = BrisbaneTime.Today(TimeProvider.System).AddDays(-_retentionDays);
+            var result = await _archiver.ArchiveBeforeAsync(cutoff, OnTimePolicy.FromEnvironment(), maxDays: 1, archiveTimeout.Token);
+            archived = result.ArchivedDays;
+            foreach (var day in result.ArchivedDays)
+            {
+                context.Logger.LogInformation($"DAY_ARCHIVED serviceDate={day:yyyy-MM-dd} detailRowsDeleted={result.DetailRowsDeleted}");
+            }
+        }
+
+        return new LoadSummary(
+            batches, snapshots, unreadable, observationRows, cancellationRows, batch.Watermark, batch.MoreAvailable, archived);
     }
 }
 
