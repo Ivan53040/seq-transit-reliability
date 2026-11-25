@@ -87,9 +87,6 @@ jobs:
     needs: [dotnet, infra, web]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
     runs-on: ubuntu-latest
-    # Required reviewers and the main-only branch rule live on this environment (README,
-    # "Deploy from GitHub Actions"); the AWS role trusts jobs that run in it.
-    environment: production
     permissions:
       contents: read
       id-token: write

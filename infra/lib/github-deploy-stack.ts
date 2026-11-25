@@ -31,10 +31,10 @@ export class GitHubDeployStack extends Stack {
 
     const [owner, repo] = repository.split('/');
     // GitHub OIDC sub claims may include immutable numeric IDs (repo:owner@<id>/repo@<id>:ref:refs/heads/main).
-    // A job that names a GitHub environment gets `:environment:<name>` instead of the ref. Deploys run
-    // in `production` (required reviewer) and the weekly GTFS sync in `gtfs-sync`; both environments
-    // allow only the main branch (README, "Deploy from GitHub Actions"). The ref patterns stay so a deploy keeps working while
-    // the workflows switch over; remove them once every deploy runs in the environment.
+    // A job that names a GitHub environment gets `:environment:<name>` instead of the ref. The
+    // `production` and `gtfs-sync` subjects are trusted ahead of time for when the repository can use
+    // protected environments (public, or GitHub Pro); on a free private repository the workflows run
+    // without one, so the main-branch subjects are what they use today.
     const subjects = (suffix: string) =>
       owner && repo ? [`repo:${repository}:${suffix}`, `repo:${owner}@*/${repo}@*:${suffix}`] : [`repo:${repository}:${suffix}`];
     const subPatterns = [

@@ -19,9 +19,6 @@ jobs:
     name: Download SEQ_GTFS.zip and swap into Aurora
     if: github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
     runs-on: ubuntu-latest
-    # Its own environment (main only, no reviewers) so the Monday run stays unattended while
-    # deploys wait for approval in `production`. The AWS role trusts both.
-    environment: gtfs-sync
     env:
       AWS_REGION: ap-southeast-2
       DB_HOST: ${{ vars.SEQ_DB_HOST }}
