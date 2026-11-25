@@ -11,6 +11,13 @@ import {
   type RouteOnTime,
   type WorstStopPerformance,
 } from './api';
+import {
+  PUNCTUALITY_BANDS,
+  PunctualityHistogram,
+  matchesPunctualityBand,
+  type PunctualityBandKey,
+} from './components/PunctualityHistogram';
+import { StopHotspotMap } from './components/StopHotspotMap';
 import { RoutePage } from './RoutePage';
 import { sampleDay } from './sample';
 
@@ -25,7 +32,7 @@ const CANONICAL_MODES = [
 ] as const;
 
 type Theme = 'light' | 'dark';
-type BoardTab = 'routes' | 'stops';
+type BoardTab = 'map' | 'routes' | 'stops';
 type SortKey = 'onTimeRate' | 'averageDelaySeconds' | 'observedStops' | 'cancellations';
 type SortDir = 'asc' | 'desc';
 
@@ -93,7 +100,7 @@ export function App() {
 
       <main>
         <Routes>
-          <Route path="/" element={<BoardPage />} />
+          <Route path="/" element={<BoardPage theme={theme} />} />
           <Route path="/routes/:routeId" element={<RoutePage />} />
         </Routes>
       </main>
@@ -111,7 +118,7 @@ export function App() {
   );
 }
 
-function BoardPage() {
+function BoardPage({ theme }: { theme: Theme }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const today = brisbaneToday();
   const date = searchParams.get('date') || today;
@@ -120,6 +127,19 @@ function BoardPage() {
   const modes = ['all', 'bus', 'train', 'ferry', 'tram'];
   const modeParam = searchParams.get('mode') ?? 'all';
   const activeMode = modes.includes(modeParam) ? modeParam : 'all';
+
+  const bandParam = searchParams.get('band') as PunctualityBandKey | null;
+  const activeBand =
+    bandParam && PUNCTUALITY_BANDS.some((b) => b.key === bandParam) ? bandParam : null;
+
+  const viewParam = searchParams.get('view');
+  const query = searchParams.get('q') ?? '';
+  const activeTab: BoardTab =
+    viewParam === 'map' || viewParam === 'routes' || viewParam === 'stops'
+      ? viewParam
+      : activeMode !== 'all' || activeBand !== null || query.trim().length > 0
+        ? 'routes'
+        : 'map';
 
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [attempt, setAttempt] = useState(0);
@@ -157,10 +177,30 @@ function BoardPage() {
     setSearchParams(next);
   };
 
-  const handleModeSelect = (nextMode: string) => {
+  const handleTabSelect = (tab: BoardTab) => {
     const next = new URLSearchParams(searchParams);
-    if (nextMode === 'all' || nextMode === activeMode) next.delete('mode');
-    else next.set('mode', nextMode);
+    next.set('view', tab);
+    setSearchParams(next, { replace: true });
+  };
+
+  const handleModeSelect = (nextMode: string, switchToRoutes = false) => {
+    const next = new URLSearchParams(searchParams);
+    const resolved = nextMode === 'all' || nextMode === activeMode ? 'all' : nextMode;
+    if (resolved === 'all') next.delete('mode');
+    else next.set('mode', resolved);
+    if (switchToRoutes && resolved !== 'all') {
+      next.set('view', 'routes');
+    }
+    setSearchParams(next, { replace: true });
+  };
+
+  const handleBandSelect = (nextBand: PunctualityBandKey | null) => {
+    const next = new URLSearchParams(searchParams);
+    if (!nextBand) next.delete('band');
+    else {
+      next.set('band', nextBand);
+      next.set('view', 'routes');
+    }
     setSearchParams(next, { replace: true });
   };
 
@@ -169,6 +209,15 @@ function BoardPage() {
     params.set('date', date);
     return `/routes/${encodeURIComponent(routeId)}?${params.toString()}`;
   };
+
+  const modeScopedRoutes = useMemo(() => {
+    if (load.state !== 'ready') return [];
+    if (activeMode === 'all') return load.report.routes;
+    return load.report.routes.filter((r) => formatMode(r.routeType).toLowerCase() === activeMode);
+  }, [load, activeMode]);
+
+  const modeScopeLabel =
+    activeMode === 'all' ? 'All modes' : activeMode.charAt(0).toUpperCase() + activeMode.slice(1);
 
   return (
     <>
@@ -200,11 +249,19 @@ function BoardPage() {
       )}
 
       {load.state === 'ready' && load.report.routes.length > 0 && (
-        <ModeStrip
-          modes={load.report.modes}
-          activeMode={activeMode}
-          onSelectMode={handleModeSelect}
-        />
+        <section className="visual-pulse" aria-label="Visual network overview">
+          <ModeBars
+            modes={load.report.modes}
+            activeMode={activeMode}
+            onSelectMode={(m) => handleModeSelect(m, true)}
+          />
+          <PunctualityHistogram
+            routes={modeScopedRoutes}
+            activeBand={activeBand}
+            onSelectBand={handleBandSelect}
+            scopeLabel={modeScopeLabel}
+          />
+        </section>
       )}
 
       {load.state === 'ready' && load.report.weeklySummary && (
@@ -223,8 +280,13 @@ function BoardPage() {
       {load.state === 'ready' && load.report.routes.length > 0 && (
         <RouteBoard
           report={load.report}
+          theme={theme}
+          activeTab={activeTab}
+          onSelectTab={handleTabSelect}
           mode={activeMode}
-          onSelectMode={handleModeSelect}
+          onSelectMode={(m) => handleModeSelect(m, false)}
+          activeBand={activeBand}
+          onSelectBand={handleBandSelect}
           routeLink={buildRouteLink}
         />
       )}
@@ -232,7 +294,7 @@ function BoardPage() {
   );
 }
 
-function ModeStrip({
+function ModeBars({
   modes,
   activeMode,
   onSelectMode,
@@ -244,16 +306,19 @@ function ModeStrip({
   const byType = new Map(modes.map((m) => [m.routeType, m]));
 
   return (
-    <section className="mode-strip" aria-label="Punctuality by transport mode">
+    <div className="pulse-col" aria-label="Punctuality by transport mode">
       <div className="section-kicker-row">
         <span className="section-kicker">Network by mode</span>
-        {activeMode !== 'all' && (
+        {activeMode !== 'all' ? (
           <button type="button" className="text-reset-btn" onClick={() => onSelectMode('all')}>
-            Clear filter ({activeMode})
+            Clear ({activeMode})
           </button>
+        ) : (
+          <span className="pulse-hint">Tap mode to filter</span>
         )}
       </div>
-      <div className="mode-grid" role="group" aria-label="Filter routes by mode">
+
+      <div className="mode-bars-list" role="group" aria-label="Filter routes by transport mode">
         {CANONICAL_MODES.map(({ routeType, key, label }) => {
           const stat = byType.get(routeType);
           const hasData = stat !== undefined && stat.observedStops > 0;
@@ -270,33 +335,35 @@ function ModeStrip({
             <button
               key={key}
               type="button"
-              className={`mode-tile mode-accent-${key} ${isSelected ? 'selected' : ''}`}
+              className={`mode-bar-row mode-accent-${key} ${isSelected ? 'selected' : ''}`}
               aria-pressed={isSelected}
               onClick={() => onSelectMode(key)}
             >
-              <div className="mode-tile-top">
-                <span className="mode-tile-name">{label}</span>
-                <span className="mode-tile-dot" aria-hidden="true" />
+              <div className="mode-bar-head">
+                <span className="mode-bar-label-group">
+                  <span className="mode-tile-dot" aria-hidden="true" />
+                  <span className="mode-tile-name">{label}</span>
+                  {hasData && (
+                    <span className="mode-bar-sub">
+                      {formatDelay(stat.averageDelaySeconds)} · {stat.observedStops.toLocaleString('en-AU')} stops
+                    </span>
+                  )}
+                </span>
+                <span className={`mode-bar-pct rate-${band}`}>
+                  {hasData ? percent(stat.onTimeRate) : '—'}
+                </span>
               </div>
-              <div className={`mode-tile-rate rate-${band}`}>
-                {hasData ? percent(stat.onTimeRate) : '—'}
-              </div>
-              <div className="mode-tile-meta">
-                {hasData ? (
-                  <>
-                    <span>{formatDelay(stat.averageDelaySeconds)}</span>
-                    <span className="meta-sep" aria-hidden="true">·</span>
-                    <span>{stat.observedStops.toLocaleString('en-AU')} stops</span>
-                  </>
-                ) : (
-                  <span>No stops recorded</span>
-                )}
+              <div className="mode-bar-track" aria-hidden="true">
+                <span
+                  className={`mode-bar-fill rate-bg-${band}`}
+                  style={{ width: hasData ? percent(stat.onTimeRate) : '0%' }}
+                />
               </div>
             </button>
           );
         })}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -307,20 +374,42 @@ function WeeklyBrief({
   summary: NonNullable<DayReport['weeklySummary']>;
   routeLink: (routeId: string) => string;
 }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
   const f = summary.inputFigures;
+  const periodLabel = `${formatShortDate(f.weekStart)} – ${formatShortDate(f.weekEnd)}`;
+
   return (
-    <section className="weekly-brief" aria-labelledby="weekly-brief-heading">
+    <section
+      className={`weekly-brief ${mobileOpen ? 'brief-mobile-open' : ''}`}
+      aria-labelledby="weekly-brief-heading"
+    >
+      <button
+        type="button"
+        className="brief-mobile-toggle"
+        aria-expanded={mobileOpen}
+        onClick={() => setMobileOpen((o) => !o)}
+      >
+        <span className="brief-mobile-toggle-left">
+          <span className="section-kicker">Weekly AI brief</span>
+          <span className="brief-mobile-summary">
+            {periodLabel} · <strong>{f.onTimePercent}%</strong> on time
+          </span>
+        </span>
+        <span className="brief-mobile-chevron" aria-hidden="true">
+          {mobileOpen ? '−' : '+'}
+        </span>
+      </button>
+
       <div className="weekly-brief-aside">
         <h2 id="weekly-brief-heading" className="section-kicker">
           Weekly brief
         </h2>
-        <p className="brief-period">
-          {formatShortDate(f.weekStart)} – {formatShortDate(f.weekEnd)}
-        </p>
+        <p className="brief-period">{periodLabel}</p>
         <p className="brief-meta">
           Written by AI ({summary.modelId}) from SQL figures shown.
         </p>
       </div>
+
       <div className="weekly-brief-body">
         <p className="brief-text">{summary.summaryText}</p>
         <dl className="brief-figures" aria-label="Source SQL figures">
@@ -371,14 +460,12 @@ function WeeklyBrief({
 function BoardSkeleton() {
   return (
     <div className="skeleton-wrap" aria-hidden="true">
-      <div className="skeleton-modes">
-        <div className="skeleton-block" />
-        <div className="skeleton-block" />
+      <div className="skeleton-pulse">
         <div className="skeleton-block" />
         <div className="skeleton-block" />
       </div>
       <div className="skeleton-rows">
-        {Array.from({ length: 6 }, (_, i) => (
+        {Array.from({ length: 5 }, (_, i) => (
           <div key={i} className="skeleton-row" />
         ))}
       </div>
@@ -420,16 +507,25 @@ function Headline({ load, date, isToday }: { load: Load; date: string; isToday: 
 
 function RouteBoard({
   report,
+  theme,
+  activeTab,
+  onSelectTab,
   mode,
   onSelectMode,
+  activeBand,
+  onSelectBand,
   routeLink,
 }: {
   report: DayReport;
+  theme: Theme;
+  activeTab: BoardTab;
+  onSelectTab: (tab: BoardTab) => void;
   mode: string;
   onSelectMode: (mode: string) => void;
+  activeBand: PunctualityBandKey | null;
+  onSelectBand: (band: PunctualityBandKey | null) => void;
   routeLink: (routeId: string) => string;
 }) {
-  const [activeTab, setActiveTab] = useState<BoardTab>('routes');
   const [showAll, setShowAll] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>('onTimeRate');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -456,7 +552,6 @@ function RouteBoard({
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     } else {
       setSortKey(key);
-      // Sensible defaults: worst on-time first (asc); highest delay / stops / cancellations first (desc).
       setSortDir(key === 'onTimeRate' ? 'asc' : 'desc');
     }
   };
@@ -465,6 +560,7 @@ function RouteBoard({
     const filtered = report.routes.filter((r) => {
       const modeName = formatMode(r.routeType).toLowerCase();
       if (mode !== 'all' && modeName !== mode) return false;
+      if (activeBand && !matchesPunctualityBand(r.onTimeRate, activeBand)) return false;
       const q = query.trim().toLowerCase();
       if (!q) return true;
       return (
@@ -484,7 +580,6 @@ function RouteBoard({
       return b.observedStops - a.observedStops;
     };
 
-    // Keep low-sample routes below reliable routes when sorting by punctuality/delay.
     if (sortKey === 'onTimeRate' || sortKey === 'averageDelaySeconds') {
       const reliable = filtered.filter((r) => r.observedStops >= MIN_RELIABLE_SAMPLE).sort(compare);
       const low = filtered.filter((r) => r.observedStops < MIN_RELIABLE_SAMPLE).sort(compare);
@@ -492,7 +587,7 @@ function RouteBoard({
     }
 
     return [...filtered].sort(compare);
-  }, [report.routes, mode, query, sortKey, sortDir, cancelled]);
+  }, [report.routes, mode, activeBand, query, sortKey, sortDir, cancelled]);
 
   const filteredStops = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -503,7 +598,11 @@ function RouteBoard({
   }, [report.worstStops, query]);
 
   const rows =
-    showAll || query || mode !== 'all' ? sortedRoutes : sortedRoutes.slice(0, ROWS_SHOWN_AT_FIRST);
+    showAll || query || mode !== 'all' || activeBand !== null
+      ? sortedRoutes
+      : sortedRoutes.slice(0, ROWS_SHOWN_AT_FIRST);
+
+  const activeBandMeta = activeBand ? PUNCTUALITY_BANDS.find((b) => b.key === activeBand) : null;
 
   const ariaSort = (key: SortKey): 'ascending' | 'descending' | 'none' =>
     sortKey === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none';
@@ -511,16 +610,32 @@ function RouteBoard({
   const sortIndicator = (key: SortKey) =>
     sortKey === key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
 
+  const searchPlaceholder =
+    activeTab === 'routes' ? 'Filter route or corridor' : 'Filter stop name or ID';
+
   return (
     <section className="board" aria-labelledby="board-title">
+      <h2 id="board-title" className="visually-hidden">
+        Explore network map, routes, and worst stops
+      </h2>
+
       <div className="board-view-bar">
         <div className="view-tabs" role="tablist" aria-label="Board view">
           <button
             type="button"
             role="tab"
+            aria-selected={activeTab === 'map'}
+            className={`view-tab ${activeTab === 'map' ? 'active' : ''}`}
+            onClick={() => onSelectTab('map')}
+          >
+            Hotspot map <span className="tab-count">{filteredStops.length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeTab === 'routes'}
             className={`view-tab ${activeTab === 'routes' ? 'active' : ''}`}
-            onClick={() => setActiveTab('routes')}
+            onClick={() => onSelectTab('routes')}
           >
             Routes <span className="tab-count">{sortedRoutes.length}</span>
           </button>
@@ -529,48 +644,85 @@ function RouteBoard({
             role="tab"
             aria-selected={activeTab === 'stops'}
             className={`view-tab ${activeTab === 'stops' ? 'active' : ''}`}
-            onClick={() => setActiveTab('stops')}
+            onClick={() => onSelectTab('stops')}
           >
-            Worst stops <span className="tab-count">{report.worstStops.length}</span>
+            Worst stops <span className="tab-count">{filteredStops.length}</span>
           </button>
         </div>
 
         <label className="search">
-          <span className="visually-hidden">
-            {activeTab === 'routes' ? 'Filter route or corridor' : 'Filter stop name or ID'}
-          </span>
+          <span className="visually-hidden">{searchPlaceholder}</span>
           <input
             type="search"
-            placeholder={activeTab === 'routes' ? 'Filter route or corridor' : 'Filter stop name or ID'}
+            placeholder={searchPlaceholder}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
         </label>
       </div>
 
-      {activeTab === 'routes' ? (
+      {activeTab === 'map' && (
+        <StopHotspotMap stops={filteredStops} theme={theme} query={query} />
+      )}
+
+      {activeTab === 'routes' && (
         <>
           <div className="board-subhead">
-            <h2 id="board-title" className="visually-hidden">
-              Routes ranked by punctuality
-            </h2>
-            <div className="mode-tabs" role="group" aria-label="Filter by transport mode">
-              {modes.map((m) => (
+            <div className="board-filter-row">
+              <div className="mode-tabs" role="group" aria-label="Filter by transport mode">
+                {modes.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`mode-tab ${mode === m ? 'active' : ''}`}
+                    aria-pressed={mode === m}
+                    onClick={() => onSelectMode(m)}
+                  >
+                    {m === 'all' ? 'All' : m.charAt(0).toUpperCase() + m.slice(1)}
+                  </button>
+                ))}
+              </div>
+
+              {activeBandMeta && (
                 <button
-                  key={m}
                   type="button"
-                  className={`mode-tab ${mode === m ? 'active' : ''}`}
-                  aria-pressed={mode === m}
-                  onClick={() => onSelectMode(m)}
+                  className="active-filter-chip"
+                  onClick={() => onSelectBand(null)}
                 >
-                  {m === 'all' ? 'All' : m.charAt(0).toUpperCase() + m.slice(1)}
+                  Band: {activeBandMeta.label} <span aria-hidden="true">×</span>
                 </button>
-              ))}
+              )}
             </div>
+
             <span className="board-sort-hint">Click any column header to sort</span>
           </div>
 
-          <div className="table-responsive">
+          {/* Touch-friendly sort bar on mobile where table headers are replaced by cards */}
+          <div className="mobile-sort-bar" role="group" aria-label="Sort routes">
+            <span className="mobile-sort-label">Sort</span>
+            {(
+              [
+                ['onTimeRate', 'On time'],
+                ['averageDelaySeconds', 'Delay'],
+                ['observedStops', 'Stops'],
+                ['cancellations', 'Cancel'],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={`mobile-sort-pill ${sortKey === key ? 'active' : ''}`}
+                aria-pressed={sortKey === key}
+                onClick={() => handleSort(key)}
+              >
+                {label}
+                {sortIndicator(key)}
+              </button>
+            ))}
+          </div>
+
+          {/* Desktop Swiss Table */}
+          <div className="desktop-table table-responsive">
             <table>
               <thead>
                 <tr>
@@ -614,21 +766,34 @@ function RouteBoard({
             </table>
           </div>
 
+          {/* Mobile Card List */}
+          <div className="mobile-cards" aria-label="Routes list">
+            {rows.map((route) => (
+              <RouteMobileCard
+                key={route.routeId}
+                route={route}
+                link={routeLink(route.routeId)}
+                cancelledTrips={cancelled.get(route.routeId) ?? 0}
+              />
+            ))}
+          </div>
+
           {rows.length === 0 && (
             <p className="board-empty">
-              No route matches “{query}” {mode !== 'all' ? `in ${mode}` : ''}.
+              No route matches the current filter
+              {query ? ` (“${query}”)` : ''}.
             </p>
           )}
 
-          {!showAll && !query && mode === 'all' && sortedRoutes.length > rows.length && (
+          {!showAll && !query && mode === 'all' && activeBand === null && sortedRoutes.length > rows.length && (
             <button type="button" className="show-all" onClick={() => setShowAll(true)}>
               Show all {sortedRoutes.length} routes
             </button>
           )}
         </>
-      ) : (
-        <WorstStopsBoard stops={filteredStops} query={query} />
       )}
+
+      {activeTab === 'stops' && <WorstStopsBoard stops={filteredStops} query={query} />}
     </section>
   );
 }
@@ -648,61 +813,91 @@ function WorstStopsBoard({ stops, query }: { stops: WorstStopPerformance[]; quer
             : 'No stops have reached 20 observations for this service day yet.'}
         </p>
       ) : (
-        <div className="table-responsive">
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">Stop</th>
-                <th scope="col" className="col-rate">
-                  On time
-                </th>
-                <th scope="col" className="num">
-                  Avg delay
-                </th>
-                <th scope="col" className="num">
-                  Stops
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {stops.map((stop, index) => {
-                const band =
-                  stop.onTimeRate >= 0.9 ? 'good' : stop.onTimeRate >= 0.75 ? 'fair' : 'poor';
-                return (
-                  <tr key={stop.stopId}>
-                    <th scope="row">
-                      <div className="stop-rank-cell">
-                        <span className="stop-rank-num">{String(index + 1).padStart(2, '0')}</span>
-                        <div>
-                          <span className="stop-name">{stop.stopName || stop.stopId}</span>
-                          <span className="stop-id muted">Stop #{stop.stopId}</span>
+        <>
+          <div className="desktop-table table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Stop</th>
+                  <th scope="col" className="col-rate">
+                    On time
+                  </th>
+                  <th scope="col" className="num">
+                    Avg delay
+                  </th>
+                  <th scope="col" className="num">
+                    Stops
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {stops.map((stop, index) => {
+                  const band =
+                    stop.onTimeRate >= 0.9 ? 'good' : stop.onTimeRate >= 0.75 ? 'fair' : 'poor';
+                  return (
+                    <tr key={stop.stopId}>
+                      <th scope="row">
+                        <div className="stop-rank-cell">
+                          <span className="stop-rank-num">{String(index + 1).padStart(2, '0')}</span>
+                          <div>
+                            <span className="stop-name">{stop.stopName || stop.stopId}</span>
+                            <span className="stop-id muted">Stop #{stop.stopId}</span>
+                          </div>
                         </div>
-                      </div>
-                    </th>
-                    <td className="col-rate">
-                      <div className={`rate rate-${band}`}>
-                        <span className="rate-track" aria-hidden="true">
-                          <span
-                            className="rate-fill"
-                            style={{ width: percent(stop.onTimeRate) }}
-                          />
-                        </span>
-                        <div className="rate-figures">
-                          <span className="rate-value">{percent(stop.onTimeRate)}</span>
-                          <span className="rate-sample-count">
-                            {stop.observedStops.toLocaleString('en-AU')} stops
+                      </th>
+                      <td className="col-rate">
+                        <div className={`rate rate-${band}`}>
+                          <span className="rate-track" aria-hidden="true">
+                            <span
+                              className="rate-fill"
+                              style={{ width: percent(stop.onTimeRate) }}
+                            />
                           </span>
+                          <div className="rate-figures">
+                            <span className="rate-value">{percent(stop.onTimeRate)}</span>
+                            <span className="rate-sample-count">
+                              {stop.observedStops.toLocaleString('en-AU')} stops
+                            </span>
+                          </div>
                         </div>
+                      </td>
+                      <td className="num">{formatDelay(stop.averageDelaySeconds)}</td>
+                      <td className="num">{stop.observedStops.toLocaleString('en-AU')}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mobile-cards" aria-label="Worst stops list">
+            {stops.map((stop, index) => {
+              const band =
+                stop.onTimeRate >= 0.9 ? 'good' : stop.onTimeRate >= 0.75 ? 'fair' : 'poor';
+              return (
+                <article key={stop.stopId} className="mobile-card">
+                  <div className="mobile-card-top">
+                    <div className="mobile-card-title-group">
+                      <span className="stop-rank-num">{String(index + 1).padStart(2, '0')}</span>
+                      <div className="mobile-card-text">
+                        <span className="mobile-card-name">{stop.stopName || stop.stopId}</span>
+                        <span className="mobile-card-sub">Stop #{stop.stopId}</span>
                       </div>
-                    </td>
-                    <td className="num">{formatDelay(stop.averageDelaySeconds)}</td>
-                    <td className="num">{stop.observedStops.toLocaleString('en-AU')}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                    </div>
+                    <span className={`mobile-card-rate rate-${band}`}>{percent(stop.onTimeRate)}</span>
+                  </div>
+                  <div className={`mobile-card-bar rate-${band}`} aria-hidden="true">
+                    <span className="rate-fill" style={{ width: percent(stop.onTimeRate) }} />
+                  </div>
+                  <div className="mobile-card-meta">
+                    <span>{formatDelay(stop.averageDelaySeconds)} avg delay</span>
+                    <span>{stop.observedStops.toLocaleString('en-AU')} stops</span>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </>
       )}
     </>
   );
@@ -759,6 +954,54 @@ function RouteRow({
       <td className="num">{route.observedStops.toLocaleString('en-AU')}</td>
       <td className="num">{cancelledTrips === 0 ? <span className="muted">0</span> : cancelledTrips}</td>
     </tr>
+  );
+}
+
+function RouteMobileCard({
+  route,
+  link,
+  cancelledTrips,
+}: {
+  route: RouteOnTime;
+  link: string;
+  cancelledTrips: number;
+}) {
+  const lowSample = route.observedStops < MIN_RELIABLE_SAMPLE;
+  const band = lowSample ? 'muted' : route.onTimeRate >= 0.9 ? 'good' : route.onTimeRate >= 0.75 ? 'fair' : 'poor';
+  const slug = modeSlug(route.routeType);
+
+  return (
+    <Link to={link} className="mobile-card mobile-card-link">
+      <div className="mobile-card-top">
+        <div className="mobile-card-title-group">
+          <span className={`route-badge badge-${slug}`}>
+            {route.routeShortName || route.routeId}
+          </span>
+          <div className="mobile-card-text">
+            <span className="mobile-card-name">{route.routeLongName || route.routeId}</span>
+            <span className="mobile-card-sub">{formatMode(route.routeType)}</span>
+          </div>
+        </div>
+        <span className={`mobile-card-rate rate-${band}`}>{percent(route.onTimeRate)}</span>
+      </div>
+      <div className={`mobile-card-bar rate-${band}`} aria-hidden="true">
+        <span className="rate-fill" style={{ width: percent(route.onTimeRate) }} />
+      </div>
+      <div className="mobile-card-meta">
+        <span>
+          {formatDelay(route.averageDelaySeconds)} avg
+          <span className="meta-sep" aria-hidden="true">·</span>
+          {lowSample
+            ? `low sample (${route.observedStops})`
+            : `${route.observedStops.toLocaleString('en-AU')} stops`}
+        </span>
+        {cancelledTrips > 0 ? (
+          <span className="rate-poor">{cancelledTrips} cancelled</span>
+        ) : (
+          <span className="mobile-card-arrow" aria-hidden="true">Details &rarr;</span>
+        )}
+      </div>
+    </Link>
   );
 }
 

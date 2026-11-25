@@ -227,51 +227,79 @@ function RouteMetricsStrip({ summary }: { summary: RouteDetailReport['summary'] 
 
 function StopsTable({ stops }: { stops: RouteStopPerformance[] }) {
   return (
-    <div className="table-responsive">
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">Stop</th>
-            <th scope="col" className="col-rate">
-              On time
-            </th>
-            <th scope="col" className="num">
-              Avg delay
-            </th>
-            <th scope="col" className="num">
-              Stops
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {stops.map((stop) => {
-            const band =
-              stop.onTimeRate >= 0.9 ? 'good' : stop.onTimeRate >= 0.75 ? 'fair' : 'poor';
-            return (
-              <tr key={stop.stopId}>
-                <th scope="row">
-                  <span className="stop-name">{stop.stopName || stop.stopId}</span>
-                  <span className="stop-id muted">Stop #{stop.stopId}</span>
-                </th>
-                <td className="col-rate">
-                  <div className={`rate rate-${band}`}>
-                    <span className="rate-track" aria-hidden="true">
-                      <span
-                        className="rate-fill"
-                        style={{ width: `${Math.round(stop.onTimeRate * 100)}%` }}
-                      />
-                    </span>
-                    <span className="rate-value">{Math.round(stop.onTimeRate * 100)}%</span>
-                  </div>
-                </td>
-                <td className="num">{formatDelay(stop.averageDelaySeconds)}</td>
-                <td className="num">{stop.observedStops.toLocaleString('en-AU')}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <>
+      <div className="desktop-table table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Stop</th>
+              <th scope="col" className="col-rate">
+                On time
+              </th>
+              <th scope="col" className="num">
+                Avg delay
+              </th>
+              <th scope="col" className="num">
+                Stops
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {stops.map((stop) => {
+              const band =
+                stop.onTimeRate >= 0.9 ? 'good' : stop.onTimeRate >= 0.75 ? 'fair' : 'poor';
+              return (
+                <tr key={stop.stopId}>
+                  <th scope="row">
+                    <span className="stop-name">{stop.stopName || stop.stopId}</span>
+                    <span className="stop-id muted">Stop #{stop.stopId}</span>
+                  </th>
+                  <td className="col-rate">
+                    <div className={`rate rate-${band}`}>
+                      <span className="rate-track" aria-hidden="true">
+                        <span
+                          className="rate-fill"
+                          style={{ width: `${Math.round(stop.onTimeRate * 100)}%` }}
+                        />
+                      </span>
+                      <span className="rate-value">{Math.round(stop.onTimeRate * 100)}%</span>
+                    </div>
+                  </td>
+                  <td className="num">{formatDelay(stop.averageDelaySeconds)}</td>
+                  <td className="num">{stop.observedStops.toLocaleString('en-AU')}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mobile-cards" aria-label="Corridor stops list">
+        {stops.map((stop) => {
+          const band =
+            stop.onTimeRate >= 0.9 ? 'good' : stop.onTimeRate >= 0.75 ? 'fair' : 'poor';
+          const pct = `${Math.round(stop.onTimeRate * 100)}%`;
+          return (
+            <article key={stop.stopId} className="mobile-card">
+              <div className="mobile-card-top">
+                <div className="mobile-card-text">
+                  <span className="mobile-card-name">{stop.stopName || stop.stopId}</span>
+                  <span className="mobile-card-sub">Stop #{stop.stopId}</span>
+                </div>
+                <span className={`mobile-card-rate rate-${band}`}>{pct}</span>
+              </div>
+              <div className={`mobile-card-bar rate-${band}`} aria-hidden="true">
+                <span className="rate-fill" style={{ width: pct }} />
+              </div>
+              <div className="mobile-card-meta">
+                <span>{formatDelay(stop.averageDelaySeconds)} avg delay</span>
+                <span>{stop.observedStops.toLocaleString('en-AU')} stops</span>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </>
   );
 }
 

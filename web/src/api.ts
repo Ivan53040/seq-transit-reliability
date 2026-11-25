@@ -146,7 +146,7 @@ export async function loadDay(date: string, signal: AbortSignal): Promise<DayRep
   const [routes, modes, worstStops, cancellations, health, weeklySummary] = await Promise.all([
     get<RouteOnTime[]>(`/api/routes/on-time${query}`, signal),
     getOptional<ModeReliability[]>(`/api/modes/on-time${query}`, signal),
-    getOptional<WorstStopPerformance[]>(`/api/stops/worst${query}&limit=30&minObservations=20`, signal),
+    getOptional<WorstStopPerformance[]>(`/api/stops/worst${query}&limit=80&minObservations=20`, signal),
     get<RouteCancellations[]>(`/api/cancellations${query}`, signal),
     get<Health>('/api/health', signal),
     getOptional<WeeklySummary>('/api/summaries/latest', signal),
