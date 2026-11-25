@@ -31,12 +31,17 @@ export class GitHubDeployStack extends Stack {
 
     const [owner, repo] = repository.split('/');
     // GitHub OIDC sub claims may include immutable numeric IDs (repo:owner@<id>/repo@<id>:ref:refs/heads/main).
-    const subPatterns = owner && repo
-      ? [
-          `repo:${repository}:ref:refs/heads/main`,
-          `repo:${owner}@*/${repo}@*:ref:refs/heads/main`,
-        ]
-      : [`repo:${repository}:ref:refs/heads/main`];
+    // A job that names a GitHub environment gets `:environment:<name>` instead of the ref. Deploys run
+    // in `production` (required reviewer) and the weekly GTFS sync in `gtfs-sync`; both environments
+    // allow only the main branch (README, "Deploy from GitHub Actions"). The ref patterns stay so a deploy keeps working while
+    // the workflows switch over; remove them once every deploy runs in the environment.
+    const subjects = (suffix: string) =>
+      owner && repo ? [`repo:${repository}:${suffix}`, `repo:${owner}@*/${repo}@*:${suffix}`] : [`repo:${repository}:${suffix}`];
+    const subPatterns = [
+      ...subjects('ref:refs/heads/main'),
+      ...subjects('environment:production'),
+      ...subjects('environment:gtfs-sync'),
+    ];
 
     const role = new iam.Role(this, 'DeployRole', {
       description: `GitHub Actions deploys for ${repository}`,
@@ -55,11 +60,15 @@ export class GitHubDeployStack extends Stack {
       }),
     );
 
-    // The workflow runs database migrations as the cluster's admin user.
+    // Migrations run as the cluster's admin user; the weekly GTFS sync only needs the ingest role,
+    // which may replace the gtfs_* tables but cannot change the schema.
     role.addToPolicy(
       new iam.PolicyStatement({
         actions: ['rds-db:connect'],
-        resources: [databaseUserArn(this, props.config.dbClusterResourceId, 'postgres')],
+        resources: [
+          databaseUserArn(this, props.config.dbClusterResourceId, 'postgres'),
+          databaseUserArn(this, props.config.dbClusterResourceId, 'seq_ingest'),
+        ],
       }),
     );
 

@@ -178,6 +178,14 @@ The workflow in `.github/workflows/ci.yml` builds and tests every push, and depl
    an IAM role that only GitHub Actions on `main` of that repository can use, with no stored access keys.
 2. In the repository settings, add these **variables**: `AWS_DEPLOY_ROLE_ARN` (from the output of step 1),
    `SEQ_DB_HOST`, `SEQ_DB_CLUSTER_RESOURCE_ID`, and optionally `SEQ_ALERT_EMAIL`.
+3. Under **Settings → Environments**, create `production` and `gtfs-sync`. Give both a deployment-branch
+   rule that allows only `main`, and give `production` yourself as a required reviewer, so every deploy
+   waits for your approval. The weekly GTFS sync runs in `gtfs-sync`, without a reviewer.
+4. Under **Settings → Rules → Rulesets**, protect `main`: block force pushes and deletion. Requiring a pull
+   request with passing CI is stronger, but changes a solo workflow of pushing straight to `main`.
+
+The role trusts jobs in those two environments. After changing `infra/lib/github-deploy-stack.ts`, run
+`npm run deploy:github` again *before* pushing, because the workflow's sign-in depends on it.
 
 ### Costs and clean-up
 

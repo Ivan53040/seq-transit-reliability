@@ -258,6 +258,12 @@ function handler(event) {
       customHeadersBehavior: {
         customHeaders: [
           {
+            // The dashboard uses none of these browser features; deny them to any injected script.
+            header: 'Permissions-Policy',
+            value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()',
+            override: true,
+          },
+          {
             header: 'Content-Security-Policy-Report-Only',
             value: CONTENT_SECURITY_POLICY,
             override: true,
