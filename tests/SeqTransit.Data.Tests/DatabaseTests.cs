@@ -510,4 +510,30 @@ public sealed class DatabaseTests(PostgresFixture database) : IAsyncLifetime
         await using var again = await LoadLock.TryAcquireAsync(database.DataSource, CancellationToken.None);
         Assert.NotNull(again);
     }
+
+    [Fact]
+    public async Task RouteHourlyOnTimeAsync_counts_trips_past_midnight_as_hour_24_and_later()
+    {
+        // 00:40 Brisbane time on 2026-10-12 is still service day 2026-10-11 (Day): hour 24, not hour 0.
+        var afterMidnightUtc = new DateTimeOffset(2026, 10, 11, 14, 40, 0, TimeSpan.Zero);
+        var tQuery = new DateTimeOffset(2026, 10, 11, 20, 0, 0, TimeSpan.Zero);
+
+        var writer = new ObservationWriter(database.DataSource);
+        await writer.SaveAsync(
+            Batch(tQuery, [Observation(1, delay: 30, feedAt: tQuery, eventTime: afterMidnightUtc)]),
+            CancellationToken.None);
+
+        await using var db = database.CreateDbContext();
+        var hourly = await new ReliabilityQueries(db).RouteHourlyOnTimeAsync("66-1", Day, OnTimePolicy.Default, tQuery, CancellationToken.None);
+
+        Assert.Equal(24, Assert.Single(hourly).Hour);
+    }
+
+    [Fact]
+    public async Task Delay_column_is_generated_from_arrival_then_departure_delay()
+    {
+        await using var command = database.DataSource.CreateCommand(
+            "SELECT attgenerated FROM pg_attribute WHERE attrelid = 'stop_delay_observation'::regclass AND attname = 'delay_s'");
+        Assert.Equal('s', (char)await command.ExecuteScalarAsync());
+    }
 }

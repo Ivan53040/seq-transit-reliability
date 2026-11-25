@@ -90,6 +90,15 @@ public sealed class ReliabilityQueries(TransitDbContext db)
     /// <summary>Route type reported for routes missing from the static timetable (added trips, stale GTFS).</summary>
     public const int UnknownRouteType = -1;
 
+    /// <summary>
+    /// Hour of a stop event on its service day, Brisbane time, GTFS style: a trip that runs past
+    /// midnight is counted as 24, 25 and so on, so it is not mixed up with early-morning trips.
+    /// </summary>
+    internal const string BrisbaneServiceHourSql = """
+        (extract(hour FROM event_time AT TIME ZONE 'Australia/Brisbane')
+            + 24 * ((event_time AT TIME ZONE 'Australia/Brisbane')::date - service_date))::int
+        """;
+
     public async Task<IReadOnlyList<RouteOnTime>> OnTimeByRouteAsync(
         DateOnly serviceDate, OnTimePolicy policy, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -325,7 +334,10 @@ public sealed class ReliabilityQueries(TransitDbContext db)
 
         var rows = await db.Database.SqlQuery<RouteHourStatsRow>($"""
             SELECT
-                extract(hour FROM event_time AT TIME ZONE 'Australia/Brisbane')::int AS "Hour",
+                -- Same expression as BrisbaneServiceHourSql. Written out because an interpolated value
+                -- here would become a query parameter, not SQL text.
+                (extract(hour FROM event_time AT TIME ZONE 'Australia/Brisbane')
+                    + 24 * ((event_time AT TIME ZONE 'Australia/Brisbane')::date - service_date))::int AS "Hour",
                 count(*)::int AS "ObservedStops",
                 count(*) FILTER (WHERE delay_s >= {early}
                                   AND delay_s <= {late})::int AS "OnTimeStops",
@@ -354,24 +366,35 @@ public sealed class ReliabilityQueries(TransitDbContext db)
         var early = -policy.EarlyToleranceSeconds;
         var late = policy.LateToleranceSeconds;
 
+        // Aggregate per stop first and join gtfs_stop only for the rows returned: joining before the
+        // GROUP BY looked up the stop name for every observation (about 160,000 a day).
         var rows = await db.Database.SqlQuery<WorstStopStatsRow>($"""
+            WITH per_stop AS (
+                SELECT
+                    stop_id,
+                    count(*) AS observed,
+                    count(*) FILTER (WHERE delay_s >= {early}
+                                      AND delay_s <= {late}) AS on_time,
+                    round(avg(delay_s)::numeric, 1) AS average_delay
+                FROM reliable_stop_observation
+                WHERE service_date = {serviceDate}
+                  AND event_time < {now}
+                GROUP BY stop_id
+                HAVING count(*) >= {minObservations}
+                ORDER BY average_delay DESC
+                LIMIT {limit}
+            )
             SELECT
-                o.stop_id AS "StopId",
-                coalesce(s.stop_name, o.stop_id) AS "StopName",
+                p.stop_id AS "StopId",
+                coalesce(s.stop_name, p.stop_id) AS "StopName",
                 s.stop_lat AS "Latitude",
                 s.stop_lon AS "Longitude",
-                count(*)::int AS "ObservedStops",
-                count(*) FILTER (WHERE o.delay_s >= {early}
-                                  AND o.delay_s <= {late})::int AS "OnTimeStops",
-                round(avg(o.delay_s)::numeric, 1)::float8 AS "AverageDelaySeconds"
-            FROM reliable_stop_observation o
-            LEFT JOIN gtfs_stop s ON s.stop_id = o.stop_id
-            WHERE o.service_date = {serviceDate}
-              AND o.event_time < {now}
-            GROUP BY o.stop_id, s.stop_name, s.stop_lat, s.stop_lon
-            HAVING count(*) >= {minObservations}
-            ORDER BY "AverageDelaySeconds" DESC
-            LIMIT {limit}
+                p.observed::int AS "ObservedStops",
+                p.on_time::int AS "OnTimeStops",
+                p.average_delay::float8 AS "AverageDelaySeconds"
+            FROM per_stop p
+            LEFT JOIN gtfs_stop s ON s.stop_id = p.stop_id
+            ORDER BY p.average_delay DESC
             """).ToListAsync(cancellationToken);
 
         return rows
@@ -393,17 +416,28 @@ public sealed class ReliabilityQueries(TransitDbContext db)
         var early = -policy.EarlyToleranceSeconds;
         var late = policy.LateToleranceSeconds;
 
+        // Aggregate per route first, then join the ~1,200 static routes once per route instead of
+        // once per observation.
         var rows = await db.Database.SqlQuery<ModeReliabilityStatsRow>($"""
+            WITH per_route AS (
+                SELECT
+                    route_id,
+                    count(*) AS observed,
+                    count(*) FILTER (WHERE delay_s >= {early}
+                                      AND delay_s <= {late}) AS on_time,
+                    sum(delay_s) AS total_delay
+                FROM reliable_stop_observation
+                WHERE service_date = {serviceDate}
+                  AND event_time < {now}
+                GROUP BY route_id
+            )
             SELECT
                 coalesce(r.route_type, {UnknownRouteType})::int AS "RouteType",
-                count(*)::int AS "ObservedStops",
-                count(*) FILTER (WHERE o.delay_s >= {early}
-                                  AND o.delay_s <= {late})::int AS "OnTimeStops",
-                round(coalesce(avg(o.delay_s), 0)::numeric, 1)::float8 AS "AverageDelaySeconds"
-            FROM reliable_stop_observation o
-            LEFT JOIN gtfs_route r ON r.route_id = o.route_id
-            WHERE o.service_date = {serviceDate}
-              AND o.event_time < {now}
+                sum(p.observed)::int AS "ObservedStops",
+                sum(p.on_time)::int AS "OnTimeStops",
+                round(coalesce(sum(p.total_delay)::numeric / nullif(sum(p.observed), 0), 0), 1)::float8 AS "AverageDelaySeconds"
+            FROM per_route p
+            LEFT JOIN gtfs_route r ON r.route_id = p.route_id
             GROUP BY 1
             ORDER BY 1
             """).ToListAsync(cancellationToken);

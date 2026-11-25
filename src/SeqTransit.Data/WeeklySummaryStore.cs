@@ -223,9 +223,9 @@ public sealed class WeeklySummaryStore(NpgsqlDataSource dataSource)
         CancellationToken cancellationToken)
     {
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = $"""
             SELECT
-                extract(hour FROM event_time AT TIME ZONE 'Australia/Brisbane')::int AS hr,
+                {ReliabilityQueries.BrisbaneServiceHourSql} AS hr,
                 count(*)::int AS obs,
                 round(100.0 * count(*) FILTER (WHERE delay_s >= $4 AND delay_s <= $5) / count(*), 1)::float8 AS on_time_pct,
                 round(avg(delay_s)::numeric / 60.0, 1)::float8 AS avg_delay_min
@@ -249,14 +249,16 @@ public sealed class WeeklySummaryStore(NpgsqlDataSource dataSource)
             return null;
         }
 
+        // Hours 24 and later are trips past midnight on the same service day (GTFS style).
         var hour = reader.GetInt32(0);
-        var label = hour switch
+        var clockHour = hour % 24;
+        var label = clockHour switch
         {
             0 => "12 am",
-            < 12 => $"{hour} am",
+            < 12 => $"{clockHour} am",
             12 => "12 pm",
-            _ => $"{hour - 12} pm",
-        };
+            _ => $"{clockHour - 12} pm",
+        } + (hour >= 24 ? " (after midnight)" : "");
         return new WeeklyHourHighlight(hour, label, reader.GetInt32(1), reader.GetDouble(2), reader.GetDouble(3));
     }
 }
