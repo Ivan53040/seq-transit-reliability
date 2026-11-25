@@ -379,7 +379,6 @@ button:hover {
   border-top: 4px solid transparent;
   background: transparent;
   min-height: auto;
-  transition: background 0.12s ease;
 }
 
 .mode-tile:last-child {
@@ -392,7 +391,7 @@ button:hover {
 
 .mode-tile.selected {
   background: var(--surface);
-  box-shadow: inset 0 -2px 0 var(--rule-strong);
+  box-shadow: inset 0 -3px 0 var(--rule-strong);
 }
 
 .mode-accent-bus { border-top-color: var(--mode-bus-bg); }
@@ -679,8 +678,13 @@ button:hover {
   color: var(--paper);
 }
 
-.search input {
+.search {
+  display: block;
   width: min(21rem, 100%);
+}
+
+.search input {
+  width: 100%;
 }
 
 .table-responsive {
@@ -702,6 +706,11 @@ td {
   vertical-align: middle;
 }
 
+th:last-child,
+td:last-child {
+  padding-right: 0;
+}
+
 thead th {
   font-size: 0.74rem;
   font-weight: 700;
@@ -720,7 +729,6 @@ tbody th {
 
 .clickable-row {
   cursor: pointer;
-  transition: background 0.1s ease;
 }
 
 .clickable-row:hover {
@@ -799,6 +807,7 @@ tbody th {
   text-align: right;
   white-space: nowrap;
   font-size: 0.92rem;
+  padding-left: 1rem;
 }
 
 .col-rate {

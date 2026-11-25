@@ -88,6 +88,7 @@ export function sampleDay(): DayReport {
 
 export function sampleRouteDetail(routeId: string, date: string): import('./api').RouteDetailReport {
   const shortName = routeId.replace(/^S/, '');
+  const matched = sampleDay().routes.find((r) => r.routeId === routeId);
   const baseDate = new Date(`${date}T00:00:00`);
 
   const daily = Array.from({ length: 7 }, (_, i) => {
@@ -150,9 +151,9 @@ export function sampleRouteDetail(routeId: string, date: string): import('./api'
   return {
     summary: {
       routeId,
-      routeShortName: shortName || routeId,
-      routeLongName: `Sample Corridor ${shortName || routeId}`,
-      routeType: 3,
+      routeShortName: matched?.routeShortName || shortName || routeId,
+      routeLongName: matched?.routeLongName || `Sample Corridor ${shortName || routeId}`,
+      routeType: matched?.routeType ?? 3,
       fromDate: daily[0].serviceDate,
       toDate: daily[6].serviceDate,
       observedStops: totalObs,
