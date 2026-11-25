@@ -11,15 +11,17 @@ Built with C# / .NET 10, ASP.NET Core, EF Core, PostgreSQL, React + TypeScript, 
 and GitHub Actions.
 
 > **Status (25 Nov 2026):** Live on AWS (`ap-southeast-2`) at [https://d2ckfcry48m74h.cloudfront.net](https://d2ckfcry48m74h.cloudfront.net)
-> with automatic GitHub Actions OIDC deployment enabled. All 4 CloudWatch alarms are `OK`, static GTFS timetable
-> is loaded in Aurora PostgreSQL Serverless (0–2 ACU, auto-pause 300s, 60-min batch load interval), and live
-> Translink snapshots are captured every minute. Pending: 48-hour Cost Explorer / Credits & auto-pause capacity verification.
+> with automatic GitHub Actions OIDC deployment, weekly automated GTFS timetable sync, and an Amazon Bedrock
+> (`amazon.nova-micro-v1:0`) weekly brief protected by a deterministic numeric guardrail. All 4 CloudWatch alarms
+> are `OK`, Aurora PostgreSQL Serverless (0–2 ACU, auto-pause 300s, 60-min batch load interval) is loaded with
+> the current SEQ GTFS timetable, and live Translink snapshots are captured every minute. Pending: 48-hour Cost
+> Explorer / Credits & auto-pause capacity verification.
 
 [Validation and evidence](docs/validation-2026-10-13.md) · [AWS deployment checklist](docs/aws-deployment.md) ·
 [Case study draft](docs/case-study.md)
 
-![Route board with real data from 12 October](docs/screenshots/board.jpg)
-![Route detail with real data from 12 October](docs/screenshots/route.jpg)
+![SEQ Transit Reliability live board — Swiss wayfinding dashboard with mode comparison, Bedrock weekly brief, and sortable routes](docs/screenshots/board.jpg)
+![Route 199 detail page — 7-day metric strip, daily trend, and hourly punctuality with AM/PM peak bands](docs/screenshots/route.jpg)
 
 ## How it works
 
@@ -190,14 +192,13 @@ To remove everything: `cd infra; npm run destroy`, then delete the cluster with
 ## Built and next steps
 
 - [x] Full weekday of GTFS-RT data, documented identifiers/cancellation checks and tested quality rules.
-- [x] Atomic static GTFS loading with route/stop names and transport modes.
+- [x] Atomic static GTFS loading with route/stop names, transport modes, and automated weekly GitHub Actions sync.
 - [x] Route summaries, daily/hourly trends, worst stops, per-mode metrics and OpenAPI.
-- [x] Searchable dashboard, date/filter URLs, sample mode, phone/dark-mode checks and accessibility scores of 100.
-- [x] Linux ARM64 Lambda packages, tested CDK infrastructure and offline synthesis of both real entrypoints.
-- [ ] Repeat query measurements after a complete week; add aggregates only if measurements justify them.
-- [ ] Deploy to AWS, confirm live data, alarms, actual auto-pause and costs, then enable GitHub OIDC deployment.
+- [x] Swiss wayfinding dashboard with mode comparison strip, worst stops view, sortable columns, light/dark toggle, sample mode, and responsive layout.
+- [x] Linux ARM64 Lambda packages, tested CDK infrastructure, live AWS deployment, and GitHub OIDC CI/CD.
+- [x] Amazon Bedrock weekly brief Lambda with deterministic numeric guardrail.
+- [ ] Verify 48-hour Cost Explorer / Credits & Aurora auto-pause capacity metrics, then repeat query measurements after a complete week.
 - [ ] Publish the completed case study/demo and add verified cloud numbers to the portfolio.
-- [ ] Optional later: Bedrock weekly summaries and measured cold-start improvements.
 
 ## Data and licences
 
