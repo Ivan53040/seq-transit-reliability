@@ -177,13 +177,16 @@ async function getOptional<T>(path: string, signal: AbortSignal): Promise<T | nu
 }
 
 export async function loadDay(date: string, signal: AbortSignal): Promise<DayReport> {
+  // Fetch /api/health first so a paused Aurora Serverless cluster is woken by a single Lambda
+  // instead of 6 parallel cold-start containers competing for the account's 10-execution quota.
+  // When warm, CloudFront serves /api/health from its 60s edge cache in ~20ms.
+  const health = await get<Health>('/api/health', signal);
   const query = `?date=${encodeURIComponent(date)}`;
-  const [routes, modes, worstStops, cancellations, health, weeklySummary] = await Promise.all([
+  const [routes, modes, worstStops, cancellations, weeklySummary] = await Promise.all([
     get<RouteOnTime[]>(`/api/routes/on-time${query}`, signal),
     getOptional<ModeReliability[]>(`/api/modes/on-time${query}`, signal),
     getOptional<WorstStopPerformance[]>(`/api/stops/worst${query}&limit=80&minObservations=20`, signal),
     get<RouteCancellations[]>(`/api/cancellations${query}`, signal),
-    get<Health>('/api/health', signal),
     getOptional<WeeklySummary>('/api/summaries/latest', signal),
   ]);
   return { routes, modes: modes ?? [], worstStops: worstStops ?? [], cancellations, health, weeklySummary };
@@ -246,9 +249,11 @@ export async function loadRouteDetail(
   signal?: AbortSignal,
 ): Promise<RouteDetailReport> {
   const abortSignal = signal ?? new AbortController().signal;
+  // Wake a paused Aurora cluster with one /api/health call before fanning out the route queries.
+  const health = await get<Health>('/api/health', abortSignal);
   // Every part of the page is anchored on the same service date, so a shared link always shows the same view.
   const period = `days=${days}&date=${encodeURIComponent(date)}`;
-  const [summary, daily, hours, stops, health] = await Promise.all([
+  const [summary, daily, hours, stops] = await Promise.all([
     get<RouteSummary>(`/api/routes/${encodeURIComponent(routeId)}?${period}`, abortSignal),
     get<DailyOnTime[]>(`/api/routes/${encodeURIComponent(routeId)}/daily?${period}`, abortSignal),
     get<RouteHourPerformance[]>(
@@ -259,7 +264,6 @@ export async function loadRouteDetail(
       `/api/routes/${encodeURIComponent(routeId)}/stops?date=${encodeURIComponent(date)}`,
       abortSignal,
     ),
-    get<Health>('/api/health', abortSignal),
   ]);
   return { summary, daily, hours, stops, health };
 }
