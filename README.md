@@ -10,13 +10,14 @@ Built with C# / .NET 10, ASP.NET Core, EF Core, PostgreSQL, React + TypeScript, 
 (Lambda, EventBridge Scheduler, S3, Aurora Serverless, API Gateway, CloudFront), deployed with the AWS CDK
 and GitHub Actions.
 
-> **Status (27 Nov 2026):** Live on AWS (`ap-southeast-2`) at [https://d2ckfcry48m74h.cloudfront.net](https://d2ckfcry48m74h.cloudfront.net)
+> **Status (27 Nov 2026):** Deployed and verified live on AWS (`ap-southeast-2`) for 48+ hours (25–27 Nov 2026)
 > with automatic GitHub Actions OIDC deployment, weekly automated GTFS timetable sync, 90-day detail retention
 > with daily rollup (`stop_daily_stats`), and an Amazon Bedrock (`amazon.nova-micro-v1:0`) weekly brief protected
-> by a deterministic numeric guardrail. All **7/7 CloudWatch alarms** are `OK`, Aurora PostgreSQL Serverless v2
-> (`0–2 ACU`, auto-pause `300 s`, 60-min batch load interval) is verified pausing to **`0 ACU` for 45–50 min/hr**,
-> and measured steady-state AWS spend is **$1.33/day pre-tax** (`$1.32` RDS, `$0.01` S3, `$0.00` across Lambda,
-> CloudFront, API Gateway, Bedrock, and CloudWatch).
+> by a deterministic numeric guardrail. All **7/7 CloudWatch alarms** stayed `OK`, Aurora PostgreSQL Serverless v2
+> (`0–2 ACU`, auto-pause `300 s`, 60-min batch load interval) paused cleanly to **`0 ACU` for 45–50 min/hr**,
+> and measured steady-state AWS spend was **$1.33/day pre-tax** (`$1.32` RDS, `$0.01` S3, `$0.00` across Lambda,
+> CloudFront, API Gateway, Bedrock, and CloudWatch). The live cloud stack has since been cleanly spun down to
+> avoid ongoing Aurora charges and can be re-deployed at any time via CDK, or previewed locally with `?sample`.
 
 [Validation and evidence](docs/validation-2026-10-13.md) · [AWS deployment checklist](docs/aws-deployment.md) ·
 [Engineering case study](docs/case-study.md)
