@@ -1,64 +1,103 @@
-# SEQ Transit Reliability
+# SEQ Transit Reliability — Engineering Case Study
+
+**Live dashboard:** [https://d2ckfcry48m74h.cloudfront.net](https://d2ckfcry48m74h.cloudfront.net)  
+**OpenAPI 3.0 spec:** [https://d2ckfcry48m74h.cloudfront.net/api/openapi/v1.json](https://d2ckfcry48m74h.cloudfront.net/api/openapi/v1.json)
 
 ## Problem
 
-Arrival apps help with the next service but do not readily show which SEQ routes have consistently poor
-punctuality, especially during commute peaks. I built a pipeline and dashboard that retain Translink's
-real-time feed and let a reader compare observed delay by route, day, hour and stop.
+Arrival apps help with the next service but do not readily show which South East Queensland (SEQ) routes
+and stops suffer consistently poor punctuality, especially during commute peaks. I built an automated
+serverless data pipeline, API, and Swiss-style wayfinding dashboard that retain Translink's real-time
+GTFS-RT feed every minute and compare observed arrival delay by route, mode, day, hour, and stop.
 
-## What works locally
+## Production Architecture (Live in AWS `ap-southeast-2`)
 
-C#/.NET 10 parses GTFS-RT protobuf, preserves the raw snapshots and folds repeated predictions into one
-observation per trip stop on a service day. PostgreSQL stores the observations and a static GTFS timetable;
-an ASP.NET Core API calculates rates and percentiles, and React exposes a searchable board with route charts.
-The current AWS design uses Lambda, S3, Aurora Serverless, API Gateway, CloudFront and CDK. Live AWS
-deployment and GitHub deployment are still pending.
+- **Ingestion & Storage:** EventBridge Scheduler triggers a .NET 10 ARM64 (Graviton) `FetchFunction`
+  every minute to parse and store raw GTFS-RT `TripUpdates` protobuf snapshots in S3 (14-day lifecycle
+  expiry). Every 60 minutes, `LoadFunction` (guarded by a PostgreSQL session advisory lock) folds new
+  snapshots in memory (`Newest Wins`) and writes them via single-round-trip `unnest` bulk upserts into
+  **Aurora PostgreSQL 17.9 Serverless v2 Express** (`0–2 ACU`, auto-pause after `300 s`, no VPC).
+- **Static Timetable Sync:** A weekly GitHub Actions workflow (`sync-gtfs.yml`) downloads the latest
+  `SEQ_GTFS.zip` every Monday at 03:00 AEST and performs an Npgsql binary `COPY` atomic table swap into
+  Aurora so route names, modes, and stop coordinates stay current when Translink rotates `route_id` suffixes.
+- **API, Edge Security & Caching:** An ASP.NET Core 10 Minimal API (`ApiFunction`) sits behind API Gateway
+  HTTP API (`5 req/s`, burst `10`) and CloudFront. CloudFront attaches an `X-Origin-Verify` header (the
+  CloudFormation stack UUID) that the API validates in constant time (`403` otherwise), caches settled past
+  service days for 24 hours (`Cache-Control`), whitelists only the 4 query parameters the API reads, and
+  serves SPA client routes via a CloudFront Function without rewriting `/api/*` 404s into HTML.
+- **AI Weekly Brief with Numeric Guardrail:** Every Monday at 07:00 AEST, `SummaryFunction` computes
+  previous-week metrics in SQL and calls Amazon Bedrock (`amazon.nova-micro-v1:0`) to narrate a 2–3 sentence
+  plain-English brief. A deterministic regex guardrail (`SummaryGuardrail`) extracts every number from the
+  model output and rejects the reply before persistence if any figure is not present in the SQL whitelist.
+- **Zero-Key CI/CD:** GitHub Actions runs .NET unit + Testcontainers PostgreSQL integration tests, CDK
+  template assertions + offline synth, and Vite builds on every push, then deploys `main` via GitHub OIDC
+  federation with no stored AWS access keys.
 
-## Three decisions and trade-offs
+## Key Engineering Decisions & Real Production Trade-offs
 
-1. **Aurora express configuration without a VPC.** IAM sign-in through Aurora's internet access gateway avoids
-   a Lambda VPC/NAT setup. It also ties the design to the supported express configuration and its limitations.
-   This is a validated infrastructure design, not evidence of measured cloud savings yet.
-2. **Raw storage every minute, database loads in batches.** Durable protobuf makes parser changes replayable;
-   a 30-minute production load interval gives the database time to pause. The trade-off is delayed analytics,
-   and API requests can still keep the database awake. Actual auto-pause and cost must be measured after deployment.
-3. **Idempotent loading.** Feed timestamps key snapshots, a database watermark marks progress and a transaction
-   contains bulk upserts. Retries preserve the newest known values. Very late snapshots older than the watermark
-   remain a documented gap, and absence from the feed is not interpreted as cancellation.
+1. **Aurora Express configuration without a VPC (no NAT Gateway).**  
+   Using Aurora's internet access gateway with `SslMode=VerifyFull` and short-lived RDS IAM auth tokens
+   (refreshed every 10 minutes by Npgsql) removes the need for a VPC and avoids a fixed ~$32+/month NAT
+   Gateway bill. Least-privilege roles (`seq_ingest` write, `seq_api` read-only) enforce access boundaries
+   with zero database passwords.
+2. **Raw snapshots every minute, batched DB loads & 90-day detail retention.**  
+   Decoupling 1-minute S3 writes from 60-minute database loads allows Aurora Serverless v2 to pause to
+   `0 ACU` between runs and keeps raw protobuf replayable. Because a full weekday produces ~540,000
+   trip-stop rows (~190 MB with indexes, ~70 GB/year), Migration `0009` + `DetailArchiver` keep per-stop
+   detail for 90 days and roll older days into `stop_daily_stats` in a single transaction, unified behind
+   an inlineable SQL function `stop_day_figures()`.
+3. **Measured PostgreSQL planner tuning (`EXPLAIN ANALYZE` on live Aurora).**  
+   On 25 November 2026, live `EXPLAIN ANALYZE` runs against Aurora (`docs/evidence/2026-11-25/query-plans.txt`)
+   showed the planner underestimated full-day row counts by ~160× (`337` estimated vs `53,554` actual)
+   because `reliable_stop_observation` filtered on `coalesce(arrival_delay_s, departure_delay_s)`, which
+   had no column statistics. That caused `/api/stops/worst` to pick a slow nested loop (~0.8 s) and spill
+   sorts to disk at `4 MB work_mem`. Migration `0008` added a `STORED GENERATED` `delay_s` column with
+   statistics, raised `work_mem` to `16 MB` for app roles, and aggregated before joining static GTFS.
+4. **Solving a real cold-wake Lambda throttling incident on a 10-concurrency account quota.**  
+   During 48-hour live monitoring (`2026-11-25 11:06 UTC`), `ApiErrorsAlarm` fired (`6` HTTP 5xx in 5 min).
+   CloudWatch Logs and Lambda metrics proved **`0` application errors** and **`6` Lambda throttles**:
+   when Aurora was paused at `0 ACU`, opening the homepage fired 6 parallel API requests that waited ~23 s
+   for Aurora to resume; a second reload 7.5 s later hit the new-account 10-concurrent-execution Lambda
+   quota. Fix: `loadDay()` and `loadRouteDetail()` now wake Aurora with a single `GET /api/health` call
+   first (`1/10` concurrency when cold; ~20 ms CloudFront edge hit when warm) before fanning out parallel
+   queries. Zero `ApiErrorsAlarm` events have occurred since.
 
-## Evidence from a complete weekday
+## Verified Evidence (Local Weekday + 48-Hour+ Live AWS Production)
 
-On Monday 12 October 2026, 2,866 distinct snapshots cover every hour with at most 70 seconds between versions.
-Their total size is 3.41 GB. Two local collectors were running; that is why the observed capture cadence is
-roughly twice the intended production cadence. The runner now rejects duplicate instances for the same directory.
+### Local Full-Weekday Audit (Monday 12 October 2026)
+- **Raw capture:** 2,866 distinct protobuf snapshots (3.41 GB), covering all 24 hours with a max gap of
+  70 seconds ([validation-2026-10-13.md](validation-2026-10-13.md)).
+- **Observations:** 540,225 unique trip-stop rows across 499 routes; 534,719 trusted passed stops after
+  excluding 5,506 delays outside ±1 hour. Median delay: 95 s; on-time rate (−60/+300 s window): 68.44%.
+- **Data-quality findings:** 15,702 of 19,696 rail observations lacked a `vehicle_id` yet carried real
+  variable delays (only 3.57% exact zero), so untracked trips are retained. Reinstated cancellations are
+  withdrawn cleanly when a newer snapshot shows the trip running.
 
-The database holds 540,225 unique trip-stop observations for that service day across 499 routes. Excluding
-5,506 delays outside ±1 hour leaves 534,719 trusted passed stops. Their median delay is 95 seconds and their
-on-time rate under the project's −60/+300 second window is 68.44%. These describe observed feed estimates,
-not the punctuality of every scheduled service or Translink's official performance measure.
+### Live AWS 48-Hour+ Verification (25–27 November 2026, `ap-southeast-2`)
+- **Aurora Serverless v2 Auto-Pause (`ServerlessDatabaseCapacity`):** Confirmed scaling cleanly down to
+  **`0 ACU` for ~45–50 minutes every hour** between hourly loads (24h peak `1.48 ACU`; active floor `0.50 ACU`
+  on occasional user visits before pausing back to `0 ACU`).
+- **CloudWatch Alarms:** All **7/7 alarms `OK`** (`NoSnapshotsAlarm`, `FeedStaleAlarm`, `LoadErrorsAlarm`,
+  `ApiErrorsAlarm`, `SummaryErrorsAlarm`, `SummaryRejectedAlarm`, `DatabaseNeverPausedAlarm`).
+- **Measured AWS Cost Explorer Spend (25–27 Nov 2026, USD, pre-tax + GST):**
+  - **Nov 25 (launch day, migrations & heavy testing):** $1.68 (`RDS` $1.37, `S3` $0.01, `Tax` $0.30)
+  - **Nov 26 (first full steady-state 24h at 60-min load interval):** **$1.33 pre-tax** (`RDS` $1.32,
+    `S3` $0.01; **$0.00 across all 12 other services** — Lambda, CloudFront, API Gateway, Amazon Bedrock,
+    CloudWatch, EventBridge, SNS, SQS, CloudFormation, KMS, Secrets Manager, Data Transfer)
+  - **Nov 27 (partial UTC day):** $0.24 (`RDS` $0.24)
+  - **Cost takeaway:** 99% of spend is Aurora ACU compute during hourly wakes (~15 min awake/hr × 24 wakes/day
+    ≈ $1.32/day or ~$40/month at 60-min cadence). Because load cadence is parameterized via
+    `SEQ_LOAD_INTERVAL_MINUTES`, lengthening the batch interval (e.g. to 180 min) scales RDS cost down
+    proportionally without code changes.
+- **Frontend Performance & Accessibility:** Lazy-loaded Leaflet OpenStreetMap monochrome hotspot map and
+  route detail chunk, responsive mobile card layout (`390×844` verified), `ResizeObserver`-measured SVG
+  charts (`useChartWidth`), WCAG AA contrast, and Lighthouse evidence recorded in
+  [docs/evidence/2026-11-25/lighthouse-scores.json](evidence/2026-11-25/lighthouse-scores.json).
 
-A surprise was how many rail observations lacked a vehicle ID: 15,702 untracked versus 3,994 tracked.
-Untracked rail still had variable delays; just 3.57% were exactly zero. A blanket vehicle-ID filter would
-have removed most rail data. Another finding was one explicitly cancelled trip later appearing as running;
-withdrawing the cancellation explains the final count of zero without claiming there were no disruptions.
+## What I Would Improve Next
 
-Four representative SQL plans execute in about 9–191 ms on the current local data. Five HTTP samples per
-analysis endpoint measured 10–157 ms. The one-week-volume and AWS cold-start checks remain pending.
-Lighthouse mobile accessibility scores are 100 for both board and route page. The .NET, PostgreSQL integration
-and CDK tests pass. Detailed counts and measurement limits are in [the validation report](validation-2026-10-13.md).
-
-## Before publication
-
-- Add the live URL, measured monthly spend by service and evidence of Aurora pausing after 48 hours.
-- Repeat query measurements with a complete week of data and record any resulting schema decision.
-- Confirm the meaning of entirely SKIPPED stop lists; do not derive full-trip cancellations from them yet.
-- Record a 2–3 minute demo: board and peak-hour chart (60s), architecture (30s), batching/retry trade-off (30s),
-  then the verified AWS alarms, cost graph and pause metric (30s).
-- Write the LinkedIn post and CV bullets using only validated local facts until the cloud claims are measured.
-
-## What I would change next
-
-Use the complete-week workload to decide whether daily aggregates are necessary. Evaluate compressing raw
-snapshots using measured S3 request/storage cost and Lambda CPU trade-offs. Distinguish estimates observed
-before/after a stop event, and investigate cancellation semantics against timetable and service-alert evidence
-before making stronger service-delivery claims.
+- Switch CloudFront's `Content-Security-Policy-Report-Only` header to enforcing `Content-Security-Policy`
+  after a week of clean browser telemetry.
+- Request a Lambda account concurrency quota increase (from default `10` to `100`) and enable optional
+  `SEQ_RESERVE_CONCURRENCY` if public traffic grows.
+- Evaluate gzip-compressing raw S3 protobuf snapshots if snapshot retention is extended beyond 14 days.

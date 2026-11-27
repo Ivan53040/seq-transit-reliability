@@ -10,15 +10,16 @@ Built with C# / .NET 10, ASP.NET Core, EF Core, PostgreSQL, React + TypeScript, 
 (Lambda, EventBridge Scheduler, S3, Aurora Serverless, API Gateway, CloudFront), deployed with the AWS CDK
 and GitHub Actions.
 
-> **Status (25 Nov 2026):** Live on AWS (`ap-southeast-2`) at [https://d2ckfcry48m74h.cloudfront.net](https://d2ckfcry48m74h.cloudfront.net)
-> with automatic GitHub Actions OIDC deployment, weekly automated GTFS timetable sync, and an Amazon Bedrock
-> (`amazon.nova-micro-v1:0`) weekly brief protected by a deterministic numeric guardrail. All 4 CloudWatch alarms
-> are `OK`, Aurora PostgreSQL Serverless (0–2 ACU, auto-pause 300s, 60-min batch load interval) is loaded with
-> the current SEQ GTFS timetable, and live Translink snapshots are captured every minute. Pending: 48-hour Cost
-> Explorer / Credits & auto-pause capacity verification.
+> **Status (27 Nov 2026):** Live on AWS (`ap-southeast-2`) at [https://d2ckfcry48m74h.cloudfront.net](https://d2ckfcry48m74h.cloudfront.net)
+> with automatic GitHub Actions OIDC deployment, weekly automated GTFS timetable sync, 90-day detail retention
+> with daily rollup (`stop_daily_stats`), and an Amazon Bedrock (`amazon.nova-micro-v1:0`) weekly brief protected
+> by a deterministic numeric guardrail. All **7/7 CloudWatch alarms** are `OK`, Aurora PostgreSQL Serverless v2
+> (`0–2 ACU`, auto-pause `300 s`, 60-min batch load interval) is verified pausing to **`0 ACU` for 45–50 min/hr**,
+> and measured steady-state AWS spend is **$1.33/day pre-tax** (`$1.32` RDS, `$0.01` S3, `$0.00` across Lambda,
+> CloudFront, API Gateway, Bedrock, and CloudWatch).
 
 [Validation and evidence](docs/validation-2026-10-13.md) · [AWS deployment checklist](docs/aws-deployment.md) ·
-[Case study draft](docs/case-study.md)
+[Engineering case study](docs/case-study.md)
 
 ![SEQ Transit Reliability live board — headline on-time rate, mode comparison, route-spread histogram, Bedrock weekly brief, and the stop hotspot map](docs/screenshots/board.jpg)
 ![Routes view — every active route sorted by on-time rate, with average delay, observed stops, and cancellations](docs/screenshots/board-routes.jpg)
@@ -207,12 +208,12 @@ To remove everything: `cd infra; npm run destroy`, then delete the cluster with
 
 - [x] Full weekday of GTFS-RT data, documented identifiers/cancellation checks and tested quality rules.
 - [x] Atomic static GTFS loading with route/stop names, transport modes, and automated weekly GitHub Actions sync.
-- [x] Route summaries, daily/hourly trends, worst stops, per-mode metrics and OpenAPI.
-- [x] Swiss wayfinding dashboard with mode comparison strip, worst stops view, sortable columns, light/dark toggle, sample mode, and responsive layout.
-- [x] Linux ARM64 Lambda packages, tested CDK infrastructure, live AWS deployment, and GitHub OIDC CI/CD.
+- [x] Route summaries, daily/hourly trends, worst stops, per-mode metrics, 90-day retention rollup, and OpenAPI.
+- [x] Swiss wayfinding dashboard with OpenStreetMap hotspot map, route-spread histogram, mobile card view, light/dark toggle, and Lighthouse evidence.
+- [x] Linux ARM64 Lambda packages, tested CDK infrastructure, live AWS deployment, origin verification, and GitHub OIDC CI/CD.
 - [x] Amazon Bedrock weekly brief Lambda with deterministic numeric guardrail.
-- [ ] Verify 48-hour Cost Explorer / Credits & Aurora auto-pause capacity metrics, then repeat query measurements after a complete week.
-- [ ] Publish the completed case study/demo and add verified cloud numbers to the portfolio.
+- [x] 48-hour+ live AWS verification (7/7 alarms `OK`, Aurora `0 ACU` auto-pause verified, measured Cost Explorer spend, live `EXPLAIN ANALYZE` tuning).
+- [x] Completed [engineering case study](docs/case-study.md) with verified cloud numbers.
 
 ## Data and licences
 
